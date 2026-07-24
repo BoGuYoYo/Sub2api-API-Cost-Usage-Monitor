@@ -4,9 +4,10 @@ import type { MouseEvent } from "react";
 
 interface TitleBarProps {
   onSettings?: () => void;
+  solid?: boolean;
 }
 
-export default function TitleBar({ onSettings }: TitleBarProps) {
+export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
   async function handleDragStart(event: MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
 
@@ -18,7 +19,11 @@ export default function TitleBar({ onSettings }: TitleBarProps) {
   }
 
   return (
-    <div className="flex items-center justify-between h-9 px-3 bg-black/20 backdrop-blur-md shrink-0">
+    <div
+      className={`flex h-9 shrink-0 items-center justify-between px-3 ${
+        solid ? "bg-[#171432]" : "bg-black/20 backdrop-blur-md"
+      }`}
+    >
       {/* Drag region - only the title area */}
       <div
         data-tauri-drag-region

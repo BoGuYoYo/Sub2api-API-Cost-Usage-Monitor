@@ -66,6 +66,31 @@ export function clearStoredTokens() {
   localStorage.removeItem("refresh_token");
 }
 
+export function isTokenExpired(token: string): boolean {
+  const payload = token.split(".")[1];
+  if (!payload) return false;
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="));
+    const parsed = JSON.parse(decoded) as { exp?: unknown };
+    return typeof parsed.exp === "number" && parsed.exp * 1000 <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
+export function getStoredAuthToken(): string | null {
+  const token =
+    localStorage.getItem("auth_token") ||
+    localStorage.getItem("access_token");
+  if (token && isTokenExpired(token)) {
+    clearStoredTokens();
+    return null;
+  }
+  return token;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {}

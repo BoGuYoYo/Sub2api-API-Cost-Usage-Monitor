@@ -24,6 +24,7 @@ export default function LoginPage() {
     setError("");
     try {
       await login(username, password);
+      window.dispatchEvent(new Event("auth-changed"));
       navigate("/", { replace: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -42,22 +43,19 @@ export default function LoginPage() {
     <>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
       <div className="relative z-20">
-        <TitleBar onSettings={() => setSettingsOpen(true)} />
+        <TitleBar onSettings={() => setSettingsOpen(true)} solid />
       </div>
 
       <div className="relative flex-1 flex items-center justify-center overflow-hidden">
         {/* Animated gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] animate-gradient">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(120,119,198,0.3),transparent_50%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,rgba(255,94,247,0.15),transparent_50%)]" />
-        </div>
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,#211c45_0%,#342b68_52%,#211d42_100%)]" />
 
         {/* Glassmorphism login card */}
         <div className="relative z-10 w-full max-w-sm mx-4">
-          <div className="backdrop-blur-xl bg-white/[0.06] border border-white/[0.12] rounded-2xl shadow-2xl p-8">
+          <div className="rounded-2xl border border-[#625b91] bg-[#332d62] p-8 shadow-2xl">
             {/* Logo / Title */}
             <div className="text-center mb-8">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-md mb-4">
+              <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-[#5e568b]">
                 <LogIn size={24} className="text-white/80" />
               </div>
               <h1 className="text-2xl font-light text-white tracking-wider">
@@ -74,7 +72,7 @@ export default function LoginPage() {
                   placeholder="Username or Email"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white/90 placeholder:text-white/25 text-sm outline-none focus:border-white/30 focus:bg-white/[0.08] transition-all"
+                  className="w-full rounded-xl border border-[#6e6698] bg-[#423b73] px-4 py-2.5 text-sm text-white/90 outline-none transition-all placeholder:text-white/35 focus:border-[#a49acb] focus:bg-[#4b437d]"
                   autoComplete="username"
                 />
               </div>
@@ -84,13 +82,13 @@ export default function LoginPage() {
                   placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white/90 placeholder:text-white/25 text-sm outline-none focus:border-white/30 focus:bg-white/[0.08] transition-all pr-10"
+                  className="w-full rounded-xl border border-[#6e6698] bg-[#423b73] px-4 py-2.5 pr-10 text-sm text-white/90 outline-none transition-all placeholder:text-white/35 focus:border-[#a49acb] focus:bg-[#4b437d]"
                   autoComplete="current-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/45 transition-colors hover:text-white/80"
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -103,7 +101,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 bg-white/10 hover:bg-white/15 border border-white/10 rounded-xl text-white/90 text-sm font-medium transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#7b70a6] bg-[#5d5688] py-2.5 text-sm font-medium text-white/95 transition-all duration-300 hover:bg-[#6c6297] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <Loader2 size={16} className="animate-spin" />
