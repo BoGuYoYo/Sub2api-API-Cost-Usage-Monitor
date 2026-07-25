@@ -1,7 +1,8 @@
 # Sub2API API Cost Usage Monitor
 
 A lightweight Windows and macOS desktop monitor for Sub2API-compatible services.
-![Uploading image.png…]()
+<img width="1120" height="601" alt="image" src="https://github.com/user-attachments/assets/14c8673c-c2b7-486f-9312-5a75af2a19d3" />
+
 
 ## Features
 
