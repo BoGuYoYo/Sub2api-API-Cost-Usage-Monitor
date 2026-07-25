@@ -1,6 +1,7 @@
 # Sub2API API Cost Usage Monitor
 
 A lightweight Windows and macOS desktop monitor for Sub2API-compatible services.
+![Uploading image.png…]()
 
 ## Features
 
