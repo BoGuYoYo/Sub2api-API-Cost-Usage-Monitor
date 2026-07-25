@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Routes,
-  Route,
-  Navigate,
-  useNavigate,
-} from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
-import Dashboard from "./pages/Dashboard";
+import DashboardLayout from "./pages/DashboardLayout";
 import FloatingWidget from "./pages/FloatingWidget";
-import {
-  clearStoredTokens,
-  fetchUserProfile,
-  getStoredAuthToken,
-} from "./lib/api";
+import { clearStoredTokens, fetchUserProfile, getStoredAuthToken } from "./lib/api";
 
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 
@@ -88,7 +79,7 @@ function App() {
       <Route
         path="/*"
         element={
-          authStatus === "authenticated" ? <Dashboard /> : <Navigate to="/login" replace />
+          authStatus === "authenticated" ? <DashboardLayout /> : <Navigate to="/login" replace />
         }
       />
     </Routes>

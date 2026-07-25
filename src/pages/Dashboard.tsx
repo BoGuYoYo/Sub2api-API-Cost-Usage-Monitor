@@ -1,29 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  Activity,
-  BarChart3,
-  Clock,
-  DollarSign,
-  LogOut,
-  Monitor,
-  RefreshCw,
-  Zap,
-} from "lucide-react";
-import TitleBar from "../components/TitleBar";
-import {
-  clearStoredTokens,
-  fetchDashboardStats,
-  fetchRecentUsage,
-  type DashboardStats,
-  type UsageRecord,
-} from "../lib/api";
-import SettingsModal from "../components/SettingsModal";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Activity, BarChart3, Clock, DollarSign, Monitor, RefreshCw, Zap } from "lucide-react";
+import { fetchDashboardStats, fetchRecentUsage, type DashboardStats, type UsageRecord } from "../lib/api";
 import { openFloatingWidget } from "../lib/windows";
 
 function toFiniteNumber(value: unknown): number | null {
@@ -129,10 +106,7 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
       {loading ? (
         <div className="space-y-2 p-3" aria-label="Loading recent model usage">
           {[0, 1, 2, 3].map((item) => (
-            <div
-              key={item}
-              className="h-14 animate-pulse rounded-xl bg-white/[0.06]"
-            />
+            <div key={item} className="h-14 animate-pulse rounded-xl bg-white/[0.06]" />
           ))}
         </div>
       ) : records && records.length > 0 ? (
@@ -149,10 +123,7 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
                   <Zap size={15} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p
-                    className="truncate text-sm font-medium text-white/80"
-                    title={model}
-                  >
+                  <p className="truncate text-sm font-medium text-white/80" title={model}>
                     {model}
                   </p>
                   <p className="mt-0.5 flex items-center gap-1 text-[11px] text-white/35">
@@ -183,12 +154,10 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentUsage, setRecentUsage] = useState<UsageRecord[] | null>(null);
   const [recentLoading, setRecentLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [widgetError, setWidgetError] = useState("");
 
   const fetchData = useCallback(async () => {
@@ -224,11 +193,6 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  function handleLogout() {
-    clearStoredTokens();
-    navigate("/login", { replace: true });
-  }
-
   async function handleOpenWidget() {
     setWidgetError("");
     try {
@@ -240,104 +204,68 @@ export default function Dashboard() {
     }
   }
 
-  function handleSettingsSaved() {
-    clearStoredTokens();
-    navigate("/login", { replace: true });
-  }
-
   return (
-    <>
-      <div className="relative flex h-full w-full flex-col overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] animate-gradient">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(120,119,198,0.25),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,rgba(255,94,247,0.12),transparent_50%)]" />
-      </div>
-
-      <div className="relative z-20">
-        <TitleBar onSettings={() => setSettingsOpen(true)} />
-      </div>
-
-      <div className="relative z-10 flex-1 space-y-5 overflow-y-auto p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-light tracking-wide text-white/90">
-              Dashboard
-            </h1>
-            {lastUpdate && (
-              <p className="mt-0.5 text-[10px] text-white/30">
-                Updated {lastUpdate.toLocaleTimeString()}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Open desktop widget"
-              title="Desktop widget"
-              onClick={handleOpenWidget}
-              className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
-            >
-              <Monitor size={14} />
-              <span>Desktop Widget</span>
-            </button>
-            <button
-              type="button"
-              aria-label="Refresh dashboard"
-              title="Refresh dashboard"
-              onClick={fetchData}
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/5 text-white/40 transition-all hover:bg-white/10 hover:text-white/70"
-            >
-              <RefreshCw size={14} />
-            </button>
-            <button
-              type="button"
-              aria-label="Log out"
-              title="Log out"
-              onClick={handleLogout}
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/5 text-white/40 transition-all hover:bg-white/10 hover:text-red-400/70"
-            >
-              <LogOut size={14} />
-            </button>
-          </div>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-light tracking-wide text-white/90">Dashboard</h1>
+          {lastUpdate && (
+            <p className="mt-0.5 text-[10px] text-white/30">
+              Updated {lastUpdate.toLocaleTimeString()}
+            </p>
+          )}
         </div>
-
-        {widgetError && (
-          <p role="alert" className="-mt-2 text-xs text-red-300">
-            {widgetError}
-          </p>
-        )}
-
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard
-            icon={<DollarSign size={18} />}
-            label="Today's Spend"
-            value={stats ? formatCost(stats.today_actual_cost) : "$---"}
-          />
-          <StatCard
-            icon={<Zap size={18} />}
-            label="Today's Tokens"
-            value={stats ? formatNumber(stats.today_tokens) : "---"}
-          />
-          <StatCard
-            icon={<BarChart3 size={18} />}
-            label="Total Tokens"
-            value={stats ? formatNumber(stats.total_tokens) : "---"}
-          />
-          <StatCard
-            icon={<Activity size={18} />}
-            label="Today's Requests"
-            value={stats ? formatNumber(stats.today_requests) : "---"}
-          />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Open desktop widget"
+            title="Desktop widget"
+            onClick={handleOpenWidget}
+            className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
+          >
+            <Monitor size={14} />
+            <span>Desktop Widget</span>
+          </button>
+          <button
+            type="button"
+            aria-label="Refresh dashboard"
+            title="Refresh dashboard"
+            onClick={fetchData}
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/5 text-white/40 transition-all hover:bg-white/10 hover:text-white/70"
+          >
+            <RefreshCw size={14} />
+          </button>
         </div>
+      </div>
 
-        <RecentUsage records={recentUsage} loading={recentLoading} />
+      {widgetError && (
+        <p role="alert" className="text-xs text-red-300">{widgetError}</p>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
+        <StatCard
+          icon={<DollarSign size={18} />}
+          label="Today's Spend"
+          value={stats ? formatCost(stats.today_actual_cost) : "$---"}
+        />
+        <StatCard
+          icon={<Zap size={18} />}
+          label="Today's Tokens"
+          value={stats ? formatNumber(stats.today_tokens) : "---"}
+        />
+        <StatCard
+          icon={<BarChart3 size={18} />}
+          label="Total Tokens"
+          value={stats ? formatNumber(stats.total_tokens) : "---"}
+        />
+        <StatCard
+          icon={<Activity size={18} />}
+          label="Today's Requests"
+          value={stats ? formatNumber(stats.today_requests) : "---"}
+        />
       </div>
-      </div>
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={handleSettingsSaved}
-      />
-    </>
+
+      <RecentUsage records={recentUsage} loading={recentLoading} />
+    </div>
   );
 }
