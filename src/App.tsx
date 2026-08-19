@@ -3,7 +3,13 @@ import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import DashboardLayout from "./pages/DashboardLayout";
 import FloatingWidget from "./pages/FloatingWidget";
-import { clearStoredTokens, fetchUserProfile, getStoredAuthToken } from "./lib/api";
+import {
+  cancelTokenAutoRefresh,
+  clearStoredTokens,
+  fetchUserProfile,
+  getStoredAuthToken,
+  scheduleTokenAutoRefresh,
+} from "./lib/api";
 
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 
@@ -59,6 +65,14 @@ function App() {
       window.removeEventListener("auth-changed", handleAuthChanged);
     };
   }, [navigate, validateSession]);
+
+  useEffect(() => {
+    if (authStatus === "authenticated") {
+      scheduleTokenAutoRefresh();
+    } else {
+      cancelTokenAutoRefresh();
+    }
+  }, [authStatus]);
 
   if (authStatus === "checking") {
     return <AuthLoading />;

@@ -7,6 +7,7 @@ A lightweight Windows and macOS desktop monitor for Sub2API-compatible services.
 ## Features
 
 - Login and token persistence in the local app storage
+- Automatic access token refresh with session renewal
 - Today and total request and token statistics
 - Recent model usage for the last seven days
 - Optional desktop floating widget

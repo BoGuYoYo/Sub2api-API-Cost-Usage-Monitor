@@ -41,6 +41,44 @@ export function saveApiBaseUrl(value: string): string {
   return normalized;
 }
 
+export interface ConnectionCheck {
+  reachable: boolean;
+  status?: number;
+  detail: string;
+}
+
+export async function checkApiConnection(value: string): Promise<ConnectionCheck> {
+  let baseUrl: string;
+  try {
+    baseUrl = normalizeApiBaseUrl(value);
+  } catch (reason: unknown) {
+    return {
+      reachable: false,
+      detail: reason instanceof Error ? reason.message : "Invalid URL.",
+    };
+  }
+
+  try {
+    const response = await tauriFetch(`${baseUrl}/auth/me`, {
+      method: "GET",
+      headers: {
+        "Accept-Language": "zh-CN",
+      },
+      connectTimeout: 15000,
+    });
+    return {
+      reachable: true,
+      status: response.status,
+      detail: `${baseUrl} responded with HTTP ${response.status}.`,
+    };
+  } catch (error: unknown) {
+    return {
+      reachable: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 interface ApiEnvelope<T> {
   code?: number;
   data?: T;
@@ -64,41 +102,212 @@ export function clearStoredTokens() {
   localStorage.removeItem("auth_token");
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
+  localStorage.removeItem("token_expires_at");
+  cancelTokenAutoRefresh();
 }
 
-export function isTokenExpired(token: string): boolean {
+const TOKEN_EXPIRY_STORAGE_KEY = "token_expires_at";
+const REFRESH_AHEAD_MS = 120_000;
+const REFRESH_LOCK_KEY = "sub2api-auth-token-refresh";
+
+let refreshInFlight: Promise<string | null> | null = null;
+let autoRefreshTimer: number | null = null;
+
+interface LoginResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}
+
+function getStoredRefreshToken(): string | null {
+  return localStorage.getItem("refresh_token");
+}
+
+function getStoredTokenExpiry(): number | null {
+  const raw = localStorage.getItem(TOKEN_EXPIRY_STORAGE_KEY);
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function getJwtExpiryMs(token: string): number | null {
   const payload = token.split(".")[1];
-  if (!payload) return false;
+  if (!payload) return null;
 
   try {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="));
+    const decoded = atob(
+      normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
+    );
     const parsed = JSON.parse(decoded) as { exp?: unknown };
-    return typeof parsed.exp === "number" && parsed.exp * 1000 <= Date.now();
+    return typeof parsed.exp === "number" ? parsed.exp * 1000 : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+export function isTokenExpired(token: string): boolean {
+  const expiry = getJwtExpiryMs(token);
+  return expiry !== null && expiry <= Date.now();
+}
+
+function shouldRefreshToken(token: string): boolean {
+  const expiry = getStoredTokenExpiry() ?? getJwtExpiryMs(token);
+  return expiry !== null && expiry <= Date.now() + REFRESH_AHEAD_MS;
+}
+
+function persistAuthTokens(data: LoginResponse): void {
+  localStorage.setItem("auth_token", data.access_token);
+  localStorage.setItem("access_token", data.access_token);
+  if (data.refresh_token) {
+    localStorage.setItem("refresh_token", data.refresh_token);
+  }
+  if (typeof data.expires_in === "number") {
+    localStorage.setItem(
+      TOKEN_EXPIRY_STORAGE_KEY,
+      String(Date.now() + data.expires_in * 1000)
+    );
+  } else {
+    const jwtExpiry = getJwtExpiryMs(data.access_token);
+    if (jwtExpiry !== null) {
+      localStorage.setItem(TOKEN_EXPIRY_STORAGE_KEY, String(jwtExpiry));
+    } else {
+      localStorage.removeItem(TOKEN_EXPIRY_STORAGE_KEY);
+    }
+  }
+  scheduleTokenAutoRefresh();
+}
+
+export function cancelTokenAutoRefresh(): void {
+  if (autoRefreshTimer !== null) {
+    window.clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+export function scheduleTokenAutoRefresh(): void {
+  cancelTokenAutoRefresh();
+
+  const token = getStoredAuthToken();
+  if (!token || !getStoredRefreshToken()) return;
+
+  const expiry = getStoredTokenExpiry() ?? getJwtExpiryMs(token);
+  if (expiry === null) return;
+
+  const delay = Math.max(0, expiry - Date.now() - REFRESH_AHEAD_MS);
+  autoRefreshTimer = window.setTimeout(() => {
+    autoRefreshTimer = null;
+    void refreshStoredAccessToken().catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 401) {
+        clearStoredTokens();
+        window.dispatchEvent(new Event("auth-expired"));
+      }
+    });
+  }, delay);
+}
+
+export async function refreshStoredAccessToken(): Promise<string | null> {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) return null;
+  if (refreshInFlight) return refreshInFlight;
+
+  const pending = (async () => {
+    const accessTokenBeforeLock = getStoredAuthToken();
+    const run = async () => {
+      const currentRefreshToken = getStoredRefreshToken();
+      const currentAccessToken = getStoredAuthToken();
+
+      if (currentRefreshToken !== refreshToken) {
+        if (currentAccessToken && currentAccessToken !== accessTokenBeforeLock) {
+          return currentAccessToken;
+        }
+        throw new ApiError("Session changed while refreshing.", 401);
+      }
+
+      if (
+        currentAccessToken &&
+        currentAccessToken !== accessTokenBeforeLock
+      ) {
+        return currentAccessToken;
+      }
+      if (currentAccessToken && currentAccessToken === accessTokenBeforeLock) {
+        const currentExpiry = getStoredTokenExpiry();
+        if (
+          currentExpiry !== null &&
+          currentExpiry > Date.now() + REFRESH_AHEAD_MS
+        ) {
+          return currentAccessToken;
+        }
+      }
+
+      const data = await request<LoginResponse>("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (!data.access_token) {
+        throw new ApiError("Refresh response did not include access_token.", 200);
+      }
+      if (getStoredRefreshToken() !== refreshToken) {
+        throw new ApiError("Session changed while refreshing.", 401);
+      }
+
+      persistAuthTokens(data);
+      return data.access_token;
+    };
+
+    let freshAccessToken: string;
+    if (typeof navigator !== "undefined" && navigator.locks) {
+      freshAccessToken = await navigator.locks.request(REFRESH_LOCK_KEY, run);
+    } else {
+      freshAccessToken = await run();
+    }
+    scheduleTokenAutoRefresh();
+    return freshAccessToken;
+  })();
+
+  refreshInFlight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight === pending) {
+      refreshInFlight = null;
+    }
   }
 }
 
 export function getStoredAuthToken(): string | null {
-  const token =
+  return (
     localStorage.getItem("auth_token") ||
-    localStorage.getItem("access_token");
-  if (token && isTokenExpired(token)) {
-    clearStoredTokens();
-    return null;
-  }
-  return token;
+    localStorage.getItem("access_token")
+  );
 }
 
 async function request<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const token =
-    localStorage.getItem("auth_token") ||
-    localStorage.getItem("access_token");
   const route = path.split("?", 1)[0];
+  const skipRefresh =
+    route === "/auth/login" ||
+    route === "/auth/refresh" ||
+    route.startsWith("/auth/register");
+
+  let token = getStoredAuthToken();
+  if (
+    !skipRefresh &&
+    token &&
+    getStoredRefreshToken() &&
+    shouldRefreshToken(token)
+  ) {
+    try {
+      const freshToken = await refreshStoredAccessToken();
+      if (freshToken) token = freshToken;
+    } catch {
+      // Keep the existing token so the authenticated call can surface a 401.
+    }
+  }
+
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   headers.set("Accept-Language", "zh-CN");
@@ -123,15 +332,41 @@ async function request<T>(
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
+  const doFetch = async (): Promise<Response> => {
+    try {
+      return await tauriFetch(`${getApiBaseUrl()}${path}`, {
+        ...init,
+        headers,
+        connectTimeout: 15000,
+      });
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error("[api] request failed:", reason);
+      throw new ApiError(
+        `Unable to connect to the server (${reason})`
+      );
+    }
+  };
+
   let response: Response;
   try {
-    response = await tauriFetch(`${getApiBaseUrl()}${path}`, {
-      ...init,
-      headers,
-      connectTimeout: 15000,
-    });
-  } catch {
-    throw new ApiError("Unable to connect to the server. Check your network or API URL.");
+    response = await doFetch();
+  } catch (error: unknown) {
+    throw error;
+  }
+
+  if (response.status === 401 && !skipRefresh && getStoredRefreshToken()) {
+    try {
+      const freshToken = await refreshStoredAccessToken();
+      if (freshToken) {
+        headers.set("Authorization", `Bearer ${freshToken}`);
+        response = await doFetch();
+      }
+    } catch {
+      clearStoredTokens();
+      window.dispatchEvent(new Event("auth-expired"));
+      throw new ApiError("Session expired. Please log in again.", 401);
+    }
   }
 
   let payload: ApiEnvelope<T> | T | null = null;
@@ -147,7 +382,11 @@ async function request<T>(
       : undefined;
 
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith("/auth/login")) {
+    if (
+      response.status === 401 &&
+      !path.startsWith("/auth/login") &&
+      route !== "/auth/refresh"
+    ) {
       clearStoredTokens();
       window.dispatchEvent(new Event("auth-expired"));
     }
@@ -198,12 +437,6 @@ async function requestWithFallback<T>(
   throw new ApiError("No compatible server endpoint was found.", 404);
 }
 
-interface LoginResponse {
-  access_token: string;
-  refresh_token?: string;
-  expires_in?: number;
-}
-
 export async function login(email: string, password: string) {
   const data = await request<LoginResponse>("/auth/login", {
     method: "POST",
@@ -214,11 +447,7 @@ export async function login(email: string, password: string) {
     throw new ApiError("Login response did not include access_token.", 200);
   }
 
-  localStorage.setItem("auth_token", data.access_token);
-  localStorage.setItem("access_token", data.access_token);
-  if (data.refresh_token) {
-    localStorage.setItem("refresh_token", data.refresh_token);
-  }
+  persistAuthTokens(data);
   return data;
 }
 

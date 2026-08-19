@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Save, X } from "lucide-react";
+import { Loader2, Save, Wifi, X } from "lucide-react";
 import {
+  checkApiConnection,
   getConfiguredApiUrl,
   normalizeApiBaseUrl,
   saveApiBaseUrl,
@@ -19,11 +20,17 @@ export default function SettingsModal({
 }: SettingsModalProps) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     if (open) {
       setValue(getConfiguredApiUrl());
       setError("");
+      setTestResult(null);
     }
   }, [open]);
 
@@ -38,6 +45,17 @@ export default function SettingsModal({
       onClose();
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Invalid URL.");
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await checkApiConnection(value);
+      setTestResult({ ok: result.reachable, text: result.detail });
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -103,6 +121,19 @@ export default function SettingsModal({
             </p>
           )}
 
+          {testResult && (
+            <p
+              role="status"
+              className={
+                testResult.ok
+                  ? "text-xs text-emerald-300"
+                  : "text-xs text-red-300"
+              }
+            >
+              {testResult.text}
+            </p>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
@@ -110,6 +141,19 @@ export default function SettingsModal({
               className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white/80"
             >
               Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleTest()}
+              disabled={testing || !value.trim()}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {testing ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Wifi size={15} />
+              )}
+              {testing ? "Testing..." : "Test Connection"}
             </button>
             <button
               type="submit"
