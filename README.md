@@ -8,8 +8,8 @@ A lightweight Windows and macOS desktop monitor for Sub2API-compatible relay ser
 - **Multi-account**: add any number of Sub2API relay accounts (relay URL + username + password)
 - **Free account switching** from the Dashboard without re-entering credentials
 - **Total Usage page**:
-  - **ACCOUNTS TOTAL TOKENS** card summing every enabled account's total tokens
-  - Per-account breakdowns (tokens, requests, cost)
+  - **ACCOUNTS TOTAL TOKENS** card summing each enabled account's server-side `total_tokens` (the same all-time Total Tokens shown on each account's Dashboard)
+  - Per-account breakdowns (all-time tokens, requests, cost)
   - 7-day token usage chart
 - **Offline usage history**: each account's usage is saved locally, so totals survive relay outages
 - **Re-login on expiry**: sign back in with the password when a token expires, without re-adding the account
@@ -29,7 +29,7 @@ A lightweight Windows and macOS desktop monitor for Sub2API-compatible relay ser
 6. When an account's token expires, press the **key** icon on its row in Total Usage and re-enter the password to refresh the session.
 7. Delete an account at any time (the remote Sub2API account is not affected).
 
-The **Total Usage** page shows the combined last-seven-days token usage across all enabled accounts (ACCOUNTS TOTAL TOKENS). Usage is persisted locally on every successful sync; when a relay is unreachable, the last saved numbers are still shown and the account is flagged as offline.
+The **Total Usage** page shows **ACCOUNTS TOTAL TOKENS** — the sum of each enabled account's all-time total tokens as reported by the relay (`/usage/dashboard/stats`), matching the Total Tokens number on each account's own Dashboard. Totals are persisted locally on every successful sync; when a relay is unreachable, the last saved numbers are still shown and the account is flagged as offline. The 7-day chart below reflects recent usage records.
 
 Account sessions and usage history are stored locally (`sub2api_accounts_v3` / `sub2api_usage_snapshots_v1`); credentials never leave the app and are not part of the source tree.
 

@@ -34,10 +34,16 @@ import {
   type Account,
   type AccountDraft,
 } from "../lib/accounts";
-import { ApiError, fetchAccountRecentUsage, type UsageRecord } from "../lib/api";
+import {
+  ApiError,
+  fetchAccountDashboardStats,
+  fetchAccountRecentUsage,
+  type DashboardStats,
+} from "../lib/api";
 import {
   aggregateSnapshots,
   getAccountSnapshot,
+  recordDashboardStats,
   recordUsageError,
   recordUsageForAccount,
   type AccountUsageSnapshot,
@@ -68,24 +74,23 @@ function getDateRange(): { startDate: string; endDate: string } {
   return { startDate: formatDate(startDate), endDate: formatDate(endDate) };
 }
 
-function snapshotToSummary(
-  snapshot: AccountUsageSnapshot | null
-): {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
+function toFiniteNumber(value: unknown): number | null {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function snapshotCumulative(snapshot: AccountUsageSnapshot | null): {
   totalTokens: number;
-  cost: number;
+  totalRequests: number;
+  totalCost: number;
+  todayTokens: number;
 } {
-  const days = Object.values(snapshot?.days ?? {}).filter(
-    (day): day is DailyUsage => !!day
-  );
+  const cumulative = snapshot?.cumulative;
   return {
-    requests: days.reduce((sum, day) => sum + day.requests, 0),
-    inputTokens: days.reduce((sum, day) => sum + day.inputTokens, 0),
-    outputTokens: days.reduce((sum, day) => sum + day.outputTokens, 0),
-    totalTokens: days.reduce((sum, day) => sum + day.totalTokens, 0),
-    cost: days.reduce((sum, day) => sum + day.cost, 0),
+    totalTokens: toFiniteNumber(cumulative?.totalTokens) ?? 0,
+    totalRequests: toFiniteNumber(cumulative?.totalRequests) ?? 0,
+    totalCost: toFiniteNumber(cumulative?.totalCost) ?? 0,
+    todayTokens: toFiniteNumber(cumulative?.todayTokens) ?? 0,
   };
 }
 
@@ -93,28 +98,25 @@ interface AccountRow {
   account: Account;
   status: "success" | "error" | "offline";
   error?: string;
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
   totalTokens: number;
-  cost: number;
+  totalRequests: number;
+  totalCost: number;
+  todayTokens: number;
 }
 
 interface Totals {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
   totalTokens: number;
-  cost: number;
+  totalRequests: number;
+  totalCost: number;
+  todayTokens: number;
 }
 
 function toSummary(rows: AccountRow[]): Totals {
   return {
-    requests: rows.reduce((total, item) => total + item.requests, 0),
-    inputTokens: rows.reduce((total, item) => total + item.inputTokens, 0),
-    outputTokens: rows.reduce((total, item) => total + item.outputTokens, 0),
     totalTokens: rows.reduce((total, item) => total + item.totalTokens, 0),
-    cost: rows.reduce((total, item) => total + item.cost, 0),
+    totalRequests: rows.reduce((total, item) => total + item.totalRequests, 0),
+    totalCost: rows.reduce((total, item) => total + item.totalCost, 0),
+    todayTokens: rows.reduce((total, item) => total + item.todayTokens, 0),
   };
 }
 
@@ -509,18 +511,26 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
   );
 }
 
-async function fetchAndSnapshot(account: Account) {
+/**
+ * Fetch an account's server-side dashboard stats (cumulative totals) plus its
+ * recent usage (for the 7-day chart). Successful stats are recorded into the
+ * offline snapshot; a 401 triggers a token refresh with one retry.
+ */
+async function fetchAccountData(
+  account: Account
+): Promise<{ stats: DashboardStats }> {
   const { startDate, endDate } = getDateRange();
   let context = getAccountRequestContext(account);
-  let records: UsageRecord[];
+
+  let stats: DashboardStats;
   try {
-    records = await fetchAccountRecentUsage(startDate, endDate, context);
+    stats = await fetchAccountDashboardStats(context);
   } catch (error: unknown) {
     if (error instanceof ApiError && error.status === 401) {
       const refreshed = await refreshAccountToken(account);
       if (refreshed) {
         context = getAccountRequestContext(refreshed);
-        records = await fetchAccountRecentUsage(startDate, endDate, context);
+        stats = await fetchAccountDashboardStats(context);
       } else {
         throw error;
       }
@@ -528,8 +538,19 @@ async function fetchAndSnapshot(account: Account) {
       throw error;
     }
   }
-  recordUsageForAccount(account.id, records);
-  return records;
+
+  recordDashboardStats(account.id, stats);
+
+  // Recent usage feeds the 7-day chart only; a failure here must not hide
+  // the cumulative totals, so it is best-effort.
+  try {
+    const records = await fetchAccountRecentUsage(startDate, endDate, context);
+    recordUsageForAccount(account.id, records);
+  } catch {
+    // The cumulative snapshot is already saved; keep chart data as-is.
+  }
+
+  return { stats };
 }
 
 export default function TotalUsage() {
@@ -559,23 +580,23 @@ export default function TotalUsage() {
     }
 
     const results = await Promise.allSettled(
-      enabled.map((account) => fetchAndSnapshot(account))
+      enabled.map((account) => fetchAccountData(account))
     );
 
     const nextRows = results.map((result, index) => {
       const account = enabled[index];
       const snapshot = getAccountSnapshot(account.id);
-      const fallback = snapshotToSummary(snapshot);
+      const fallback = snapshotCumulative(snapshot);
 
       if (result.status === "fulfilled") {
+        const stats = result.value.stats;
         return {
           account,
           status: "success" as const,
-          requests: fallback.requests,
-          inputTokens: fallback.inputTokens,
-          outputTokens: fallback.outputTokens,
-          totalTokens: fallback.totalTokens,
-          cost: fallback.cost,
+          totalTokens: toFiniteNumber(stats.total_tokens) ?? fallback.totalTokens,
+          totalRequests: toFiniteNumber(stats.total_requests) ?? fallback.totalRequests,
+          totalCost: toFiniteNumber(stats.total_actual_cost) ?? fallback.totalCost,
+          todayTokens: toFiniteNumber(stats.today_tokens) ?? fallback.todayTokens,
         };
       }
 
@@ -585,16 +606,18 @@ export default function TotalUsage() {
           : "Failed to load usage for this account.";
       recordUsageError(account.id, error);
 
-      const hasSnapshot = snapshot && Object.keys(snapshot.days).length > 0;
+      const hasSnapshot =
+        snapshot !== null &&
+        (Object.keys(snapshot.days).length > 0 ||
+          (toFiniteNumber(snapshot.cumulative?.totalTokens) ?? 0) > 0);
       return {
         account,
         status: (hasSnapshot ? "offline" : "error") as "offline" | "error",
         error,
-        requests: fallback.requests,
-        inputTokens: fallback.inputTokens,
-        outputTokens: fallback.outputTokens,
         totalTokens: fallback.totalTokens,
-        cost: fallback.cost,
+        totalRequests: fallback.totalRequests,
+        totalCost: fallback.totalCost,
+        todayTokens: fallback.todayTokens,
       };
     });
 
@@ -704,20 +727,20 @@ export default function TotalUsage() {
           icon={<Zap size={20} />}
           label="ACCOUNTS TOTAL TOKENS"
           value={loading ? "---" : formatNumber(totals.totalTokens)}
-          sublabel={`${formatNumber(totals.inputTokens)} in · ${formatNumber(totals.outputTokens)} out`}
+          sublabel="Sum of each account's total tokens (all-time)"
           highlight
         />
         <StatCard
           icon={<Activity size={18} />}
           label="Total Requests"
-          value={loading ? "---" : formatNumber(totals.requests)}
-          sublabel="Last 7 days"
+          value={loading ? "---" : formatNumber(totals.totalRequests)}
+          sublabel="All enabled accounts · all-time"
         />
         <StatCard
           icon={<DollarSign size={18} />}
           label="Total Cost"
-          value={loading ? "$---" : formatCost(totals.cost)}
-          sublabel="Last 7 days"
+          value={loading ? "$---" : formatCost(totals.totalCost)}
+          sublabel="All enabled accounts · all-time"
         />
         <StatCard
           icon={<ChartPie size={18} />}
@@ -820,7 +843,7 @@ export default function TotalUsage() {
                           {formatNumber(row.totalTokens)} tokens
                         </p>
                         <p className="text-[11px] tabular-nums text-white/35">
-                          {formatNumber(row.requests)} requests · {formatCost(row.cost)}
+                          {formatNumber(row.totalRequests)} requests · {formatCost(row.totalCost)}
                         </p>
                       </div>
                     )

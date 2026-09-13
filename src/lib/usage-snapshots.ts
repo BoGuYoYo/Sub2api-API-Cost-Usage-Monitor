@@ -1,13 +1,17 @@
-import type { UsageRecord } from "./api";
+import type { DashboardStats, UsageRecord } from "./api";
 
 /**
  * Offline usage snapshots.
  *
- * Every successful usage fetch for an enabled account is merged into a
- * persistent per-day snapshot under `sub2api_usage_snapshots_v1`. The Total
- * Usage page reads from these snapshots first, so history survives relay
- * outages: when a relay is unreachable, the last known numbers for that day
- * are still shown instead of zeroes.
+ * Two kinds of data are persisted per account:
+ *   - `cumulative`: the account's server-side totals from /usage/dashboard/stats,
+ *     i.e. the same "Total Tokens" shown on the account Dashboard. ACCOUNTS TOTAL
+ *     TOKENS is the sum of these values, so it counts all usage since the account
+ *     was created (not just since the app was installed).
+ *   - `days`: per-day usage from the recent usage list, used for the 7-day trend
+ *     chart. This is a fallback detail and not part of the headline total.
+ *
+ * On a failed sync the last saved values are kept so totals survive relay outages.
  */
 
 export interface DailyUsage {
@@ -20,16 +24,27 @@ export interface DailyUsage {
   cost: number;
 }
 
+export interface AccountCumulative {
+  totalTokens: number;
+  totalRequests: number;
+  totalCost: number;
+  todayTokens: number;
+  todayRequests: number;
+  todayCost: number;
+}
+
 export interface AccountUsageSnapshot {
   accountId: string;
   /** ISO timestamp of the last successful sync. */
   lastSyncAt: string;
   /** Last fetch error (relay unreachable / auth failed), when present. */
   lastError?: string;
+  /** Server-side cumulative totals (Dashboard "Total Tokens" etc.). */
+  cumulative: AccountCumulative;
   days: Record<string, DailyUsage>;
 }
 
-const STORAGE_KEY = "sub2api_usage_snapshots_v1";
+const STORAGE_KEY = "sub2api_usage_snapshots_v2";
 
 function loadAll(): Record<string, AccountUsageSnapshot> {
   try {
@@ -83,7 +98,54 @@ function sumFinite(values: unknown[]): number {
   return total;
 }
 
-/** Merge today's fetched usage records into the account snapshot. */
+function emptySnapshot(accountId: string): AccountUsageSnapshot {
+  return {
+    accountId,
+    lastSyncAt: new Date().toISOString(),
+    cumulative: {
+      totalTokens: 0,
+      totalRequests: 0,
+      totalCost: 0,
+      todayTokens: 0,
+      todayRequests: 0,
+      todayCost: 0,
+    },
+    days: {},
+  };
+}
+
+/** Persist the server-side dashboard stats (cumulative totals) for an account. */
+export function recordDashboardStats(
+  accountId: string,
+  stats: DashboardStats,
+  syncDate: Date = new Date()
+): AccountUsageSnapshot {
+  const snapshots = loadAll();
+  const existing = snapshots[accountId];
+  const base = existing ? { ...existing } : emptySnapshot(accountId);
+
+  const next: AccountUsageSnapshot = {
+    ...base,
+    accountId,
+    lastSyncAt: syncDate.toISOString(),
+    lastError: undefined,
+    cumulative: {
+      totalTokens: toFiniteNumber(stats.total_tokens) ?? 0,
+      totalRequests: toFiniteNumber(stats.total_requests) ?? 0,
+      totalCost: toFiniteNumber(stats.total_actual_cost) ?? 0,
+      todayTokens: toFiniteNumber(stats.today_tokens) ?? 0,
+      todayRequests: toFiniteNumber(stats.today_requests) ?? 0,
+      todayCost: toFiniteNumber(stats.today_actual_cost) ?? 0,
+    },
+    days: base.days ?? {},
+  };
+
+  snapshots[accountId] = next;
+  persistAll(snapshots);
+  return next;
+}
+
+/** Merge today's fetched usage records into the per-day chart data. */
 export function recordUsageForAccount(
   accountId: string,
   records: UsageRecord[],
@@ -91,6 +153,7 @@ export function recordUsageForAccount(
 ): AccountUsageSnapshot {
   const snapshots = loadAll();
   const existing = snapshots[accountId];
+  const base = existing ? { ...existing } : emptySnapshot(accountId);
   const dateKey = toDateKey(syncDate);
 
   const today: DailyUsage = {
@@ -103,10 +166,12 @@ export function recordUsageForAccount(
   };
 
   const next: AccountUsageSnapshot = {
+    ...base,
     accountId,
     lastSyncAt: syncDate.toISOString(),
+    lastError: undefined,
     days: {
-      ...(existing?.days ?? {}),
+      ...(base.days ?? {}),
       [dateKey]: today,
     },
   };
@@ -121,10 +186,8 @@ export function recordUsageError(accountId: string, error: string): void {
   const snapshots = loadAll();
   const existing = snapshots[accountId];
   snapshots[accountId] = {
-    accountId,
-    lastSyncAt: existing?.lastSyncAt ?? new Date().toISOString(),
+    ...(existing ?? emptySnapshot(accountId)),
     lastError: error,
-    days: existing?.days ?? {},
   };
   persistAll(snapshots);
 }
