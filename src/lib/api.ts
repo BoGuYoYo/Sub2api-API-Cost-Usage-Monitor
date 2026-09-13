@@ -283,17 +283,28 @@ export function getStoredAuthToken(): string | null {
   );
 }
 
+interface RequestContext {
+  baseUrl?: string;
+  bearerToken?: string | null;
+}
+
 async function request<T>(
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  context: RequestContext = {}
 ): Promise<T> {
   const route = path.split("?", 1)[0];
   const skipRefresh =
+    context.bearerToken !== undefined ||
     route === "/auth/login" ||
     route === "/auth/refresh" ||
     route.startsWith("/auth/register");
 
-  let token = getStoredAuthToken();
+  const baseUrl = context.baseUrl ?? getApiBaseUrl();
+  let token =
+    context.bearerToken !== undefined
+      ? context.bearerToken
+      : getStoredAuthToken();
   if (
     !skipRefresh &&
     token &&
@@ -334,7 +345,7 @@ async function request<T>(
 
   const doFetch = async (): Promise<Response> => {
     try {
-      return await tauriFetch(`${getApiBaseUrl()}${path}`, {
+      return await tauriFetch(`${baseUrl}${path}`, {
         ...init,
         headers,
         connectTimeout: 15000,
@@ -385,7 +396,8 @@ async function request<T>(
     if (
       response.status === 401 &&
       !path.startsWith("/auth/login") &&
-      route !== "/auth/refresh"
+      route !== "/auth/refresh" &&
+      context.bearerToken === undefined
     ) {
       clearStoredTokens();
       window.dispatchEvent(new Event("auth-expired"));
@@ -451,6 +463,30 @@ export async function login(email: string, password: string) {
   return data;
 }
 
+export async function loginWithBaseUrl(
+  baseUrl: string,
+  username: string,
+  password: string
+) {
+  const data = await request<LoginResponse>(
+    "/auth/login",
+    {
+      method: "POST",
+      body: JSON.stringify({ email: username, password }),
+    },
+    {
+      baseUrl,
+      bearerToken: null,
+    }
+  );
+
+  if (!data.access_token) {
+    throw new ApiError("Login response did not include access_token.", 200);
+  }
+
+  return data;
+}
+
 export interface DashboardStats {
   total_requests: number;
   total_tokens: number;
@@ -508,6 +544,95 @@ export async function fetchRecentUsage(
   return Array.isArray(data.items) ? data.items : [];
 }
 
+export async function refreshAccountSession(
+  refreshToken: string,
+  accessToken: string,
+  baseUrl: string
+): Promise<LoginResponse> {
+  return request<LoginResponse>(
+    "/auth/refresh",
+    {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    },
+    {
+      // Use the account's own token so a 401 never clears the global session.
+      baseUrl,
+      bearerToken: accessToken,
+    }
+  );
+}
+
+export interface AccountRequestContext {
+  baseUrl: string;
+  apiKey: string;
+}
+
+export async function requestForAccount<T>(
+  path: string,
+  init: RequestInit = {},
+  context: AccountRequestContext
+): Promise<T> {
+  return request<T>(path, init, {
+    baseUrl: context.baseUrl,
+    bearerToken: context.apiKey,
+  });
+}
+
+export async function fetchAccountDashboardStats(
+  context: AccountRequestContext
+): Promise<DashboardStats> {
+  return requestForAccount<DashboardStats>(
+    "/usage/dashboard/stats",
+    {},
+    context
+  );
+}
+
+export async function fetchAccountRecentUsage(
+  startDate: string,
+  endDate: string,
+  context: AccountRequestContext
+): Promise<UsageRecord[]> {
+  const params = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    page: "1",
+    page_size: "100",
+  });
+  const data = await requestForAccount<UsageResponse | UsageRecord[]>(
+    `/usage?${params.toString()}`,
+    {},
+    context
+  );
+
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+export async function checkAccountConnection(
+  context: AccountRequestContext
+): Promise<ConnectionCheck> {
+  try {
+    await requestForAccount<unknown>("/auth/me", { method: "GET" }, context);
+    return {
+      reachable: true,
+      detail: `${context.baseUrl} authenticated successfully.`,
+    };
+  } catch (error: unknown) {
+    if (error instanceof ApiError && typeof error.status === "number") {
+      return {
+        reachable: true,
+        status: error.status,
+        detail: `${context.baseUrl} responded with HTTP ${error.status}.`,
+      };
+    }
+    return {
+      reachable: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 // ============================================================
 // API Key Management
 // ============================================================

@@ -1,23 +1,10 @@
-import { useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import TitleBar from "../components/TitleBar";
 import Dashboard from "../pages/Dashboard";
-import ApiKeysPage from "../pages/ApiKeysPage";
-import MyGroupsPage from "../pages/MyGroupsPage";
-import MyAccountPage from "../pages/MyAccountPage";
-import MyProxyPage from "../pages/MyProxyPage";
-import SettingsModal from "../components/SettingsModal";
-import { clearStoredTokens } from "../lib/api";
+import TotalUsage from "../pages/TotalUsage";
 
 export default function DashboardLayout() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  function handleSettingsSaved() {
-    clearStoredTokens();
-    window.dispatchEvent(new Event("auth-expired"));
-  }
-
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden">
       {/* Background gradient */}
@@ -33,24 +20,16 @@ export default function DashboardLayout() {
 
       {/* Sidebar + Content */}
       <div className="relative z-20 flex flex-1 overflow-hidden">
-        <Sidebar onSettings={() => setSettingsOpen(true)} />
+        <Sidebar />
         <main className="flex-1 overflow-y-auto p-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/api-keys" element={<ApiKeysPage />} />
-            <Route path="/groups" element={<MyGroupsPage />} />
-            <Route path="/account" element={<MyAccountPage />} />
-            <Route path="/proxy" element={<MyProxyPage />} />
+            <Route path="/total-usage" element={<TotalUsage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={handleSettingsSaved}
-      />
     </div>
   );
 }

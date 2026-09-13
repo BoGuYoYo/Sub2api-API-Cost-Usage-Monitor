@@ -1,103 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import LoginPage from "./pages/LoginPage";
+import { Routes, Route } from "react-router-dom";
 import DashboardLayout from "./pages/DashboardLayout";
 import FloatingWidget from "./pages/FloatingWidget";
-import {
-  cancelTokenAutoRefresh,
-  clearStoredTokens,
-  fetchUserProfile,
-  getStoredAuthToken,
-  scheduleTokenAutoRefresh,
-} from "./lib/api";
+import { ensureActiveAccount } from "./lib/accounts";
 
-type AuthStatus = "checking" | "authenticated" | "unauthenticated";
-
-function AuthLoading() {
-  return (
-    <div className="flex h-full w-full items-center justify-center bg-[#191735] text-sm text-white/55">
-      Checking session...
-    </div>
-  );
-}
-
-function App() {
-  const navigate = useNavigate();
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(() =>
-    getStoredAuthToken() ? "checking" : "unauthenticated"
-  );
-
-  const validateSession = useCallback(async () => {
-    const token = getStoredAuthToken();
-    if (!token) {
-      setAuthStatus("unauthenticated");
-      navigate("/login", { replace: true });
-      return;
-    }
-
-    setAuthStatus("checking");
-    try {
-      await fetchUserProfile();
-      setAuthStatus("authenticated");
-    } catch {
-      clearStoredTokens();
-      setAuthStatus("unauthenticated");
-      navigate("/login", { replace: true });
-    }
-  }, [navigate]);
-
-  useEffect(() => {
-    const handleAuthExpired = () => {
-      clearStoredTokens();
-      setAuthStatus("unauthenticated");
-      navigate("/login", { replace: true });
-    };
-    const handleAuthChanged = () => {
-      void validateSession();
-    };
-
-    window.addEventListener("auth-expired", handleAuthExpired);
-    window.addEventListener("auth-changed", handleAuthChanged);
-    void validateSession();
-
-    return () => {
-      window.removeEventListener("auth-expired", handleAuthExpired);
-      window.removeEventListener("auth-changed", handleAuthChanged);
-    };
-  }, [navigate, validateSession]);
-
-  useEffect(() => {
-    if (authStatus === "authenticated") {
-      scheduleTokenAutoRefresh();
-    } else {
-      cancelTokenAutoRefresh();
-    }
-  }, [authStatus]);
-
-  if (authStatus === "checking") {
-    return <AuthLoading />;
-  }
+/**
+ * The app no longer has a login gate. On startup any stored account is
+ * activated automatically (swapping the global session). If no accounts exist
+ * yet, the Dashboard shows an empty state pointing to the Total Usage page.
+ */
+export default function App() {
+  ensureActiveAccount();
 
   if (new URLSearchParams(window.location.search).get("window") === "floating") {
-    return authStatus === "authenticated" ? <FloatingWidget /> : <LoginPage />;
+    return <FloatingWidget />;
   }
 
   return (
     <Routes>
-      <Route
-        path="/login"
-        element={
-          authStatus === "authenticated" ? <Navigate to="/" replace /> : <LoginPage />
-        }
-      />
-      <Route
-        path="/*"
-        element={
-          authStatus === "authenticated" ? <DashboardLayout /> : <Navigate to="/login" replace />
-        }
-      />
+      <Route path="/*" element={<DashboardLayout />} />
     </Routes>
   );
 }
-
-export default App;

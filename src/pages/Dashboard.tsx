@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Activity, BarChart3, Clock, DollarSign, Monitor, RefreshCw, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Activity, BarChart3, ChevronDown, Clock, DollarSign, Monitor, RefreshCw, Zap } from "lucide-react";
+import { loadAccounts, getActiveAccount, activateAccount, getActiveAccountId } from "../lib/accounts";
 import { fetchDashboardStats, fetchRecentUsage, type DashboardStats, type UsageRecord } from "../lib/api";
 import { openFloatingWidget } from "../lib/windows";
 
@@ -153,12 +155,109 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
   );
 }
 
+
+interface AccountSwitcherProps {
+  currentName: string;
+  accounts: Array<{ id: string; name: string; username: string }>;
+  onSwitch: (id: string) => void;
+}
+
+function AccountSwitcher({ currentName, accounts, onSwitch }: AccountSwitcherProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Switch account"
+        title="Switch account"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
+      >
+        <span className="max-w-[140px] truncate">{currentName}</span>
+        <ChevronDown size={13} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-2xl border border-white/[0.12] bg-[#221f45]/95 shadow-2xl backdrop-blur-xl"
+        >
+          {accounts.map((account) => (
+            <button
+              key={account.id}
+              type="button"
+              role="option"
+              aria-selected={account.name === currentName}
+              onClick={() => {
+                setOpen(false);
+                onSwitch(account.id);
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-white/70 transition-colors hover:bg-white/[0.07] hover:text-white/90"
+            >
+              <span className="min-w-0 flex-1 truncate">{account.name}</span>
+              <span className="shrink-0 text-[10px] text-white/35">{account.username}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentUsage, setRecentUsage] = useState<UsageRecord[] | null>(null);
   const [recentLoading, setRecentLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [widgetError, setWidgetError] = useState("");
+  const [activeAccountName, setActiveAccountName] = useState<string>(() => {
+    const account = getActiveAccount();
+    return account ? account.name : "No account selected";
+  });
+  const [accountList, setAccountList] = useState(() =>
+    loadAccounts().map((account) => ({
+      id: account.id,
+      name: account.name,
+      username: account.username,
+    }))
+  );
+  const [hasAccounts, setHasAccounts] = useState(() => loadAccounts().length > 0);
+
+  const refreshAccounts = useCallback(() => {
+    const loaded = loadAccounts();
+    setHasAccounts(loaded.length > 0);
+    setAccountList(
+      loaded.map((account) => ({
+        id: account.id,
+        name: account.name,
+        username: account.username,
+      }))
+    );
+    const active = getActiveAccount();
+    setActiveAccountName(active ? active.name : "No account selected");
+  }, []);
+
+
+  if (!hasAccounts) {
+    return (
+      <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center">
+        <Activity size={40} className="text-white/25" />
+        <h1 className="mt-4 text-xl font-light tracking-wide text-white/90">Welcome</h1>
+        <p className="mt-2 max-w-sm text-sm text-white/50">
+          Add a Sub2API relay account to start monitoring token usage.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate("/total-usage")}
+          className="mt-6 rounded-xl bg-white/10 px-5 py-2.5 text-sm font-medium text-white/85 transition-all hover:bg-white/15"
+        >
+          Go to Total Usage
+        </button>
+      </div>
+    );
+  }
 
   const fetchData = useCallback(async () => {
     const endDate = new Date();
@@ -187,11 +286,31 @@ export default function Dashboard() {
     }
   }, []);
 
+  const handleSwitchAccount = useCallback(async (id: string) => {
+    if (getActiveAccountId() === id) return;
+    try {
+      await activateAccount(id);
+      refreshAccounts();
+      setStats(null);
+      setRecentUsage(null);
+      void fetchData();
+    } catch {
+      // The accounts page reports switch errors; keep Dashboard stable.
+    }
+  }, [refreshAccounts, fetchData]);
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    const handleAccountsChanged = () => {
+      refreshAccounts();
+    };
+    window.addEventListener("accounts-changed", handleAccountsChanged);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("accounts-changed", handleAccountsChanged);
+    };
+  }, [fetchData, refreshAccounts]);
 
   async function handleOpenWidget() {
     setWidgetError("");
@@ -216,6 +335,11 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <AccountSwitcher
+            currentName={activeAccountName}
+            accounts={accountList}
+            onSwitch={(id) => void handleSwitchAccount(id)}
+          />
           <button
             type="button"
             aria-label="Open desktop widget"
