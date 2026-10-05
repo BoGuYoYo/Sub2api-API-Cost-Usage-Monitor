@@ -1,6 +1,7 @@
 import { Settings, X, Minus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { MouseEvent } from "react";
+import { useI18n } from "../lib/use-i18n";
 
 interface TitleBarProps {
   onSettings?: () => void;
@@ -8,6 +9,8 @@ interface TitleBarProps {
 }
 
 export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
+  const { t } = useI18n();
+
   async function handleDragStart(event: MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
 
@@ -31,7 +34,7 @@ export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
         className="flex-1 h-full flex items-center"
       >
         <span className="text-xs text-white/50 font-medium tracking-wider select-none">
-          API MONITOR
+          {t("title.appName")}
         </span>
       </div>
 
@@ -40,8 +43,8 @@ export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
         {onSettings && (
           <button
             type="button"
-            aria-label="Open settings"
-            title="Settings"
+            aria-label={t("title.openSettings")}
+            title={t("title.settings")}
             onClick={onSettings}
             className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
           >
@@ -50,8 +53,8 @@ export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
         )}
         <button
           type="button"
-          aria-label="Hide to system tray"
-          title="Hide to system tray"
+          aria-label={t("title.hide")}
+          title={t("title.hide")}
           onClick={async () => {
             try {
               await getCurrentWindow().hide();
@@ -63,8 +66,8 @@ export default function TitleBar({ onSettings, solid = false }: TitleBarProps) {
         </button>
         <button
           type="button"
-          aria-label="Close window"
-          title="Close"
+          aria-label={t("title.closeWindow")}
+          title={t("title.close")}
           onClick={async () => {
             try {
               await getCurrentWindow().close();

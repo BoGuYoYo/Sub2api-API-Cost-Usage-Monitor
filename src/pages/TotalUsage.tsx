@@ -66,43 +66,25 @@ import {
   downloadBackup,
   importBackup,
 } from "../lib/backup";
+import { formatClock, formatCompactNumber, formatCurrency, formatDateKey, formatDateTime } from "../lib/format";
+import { useI18n } from "../lib/use-i18n";
 
 /** How often the page re-reads every enabled account. */
 const SYNC_INTERVAL_MS = 60_000;
 
 function formatNumber(value: number): string {
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(2) + "M";
-  if (value >= 1_000) return (value / 1_000).toFixed(2) + "K";
-  return value.toLocaleString();
+  return formatCompactNumber(value);
 }
 
 function formatCost(value: number): string {
-  return "$" + value.toFixed(4);
-}
-
-function formatDate(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatCurrency(value);
 }
 
 function getDateRange(): { startDate: string; endDate: string } {
   const endDate = new Date();
   const startDate = new Date(endDate);
   startDate.setDate(startDate.getDate() - 6);
-  return { startDate: formatDate(startDate), endDate: formatDate(endDate) };
+  return { startDate: formatDateKey(startDate), endDate: formatDateKey(endDate) };
 }
 
 /** Relay resets older than this are summarised in the repo of history only. */
@@ -215,6 +197,7 @@ interface DailyBarProps {
 }
 
 function DailyBar({ days }: DailyBarProps) {
+  const { t } = useI18n();
   if (days.length === 0) return null;
   const max = Math.max(...days.map((day) => day.totalTokens), 1);
   return (
@@ -227,7 +210,10 @@ function DailyBar({ days }: DailyBarProps) {
           <div
             className="w-full rounded-t-md bg-white/15 transition-all hover:bg-white/25"
             style={{ height: `${Math.max(4, (day.totalTokens / max) * 64)}px` }}
-            title={`${day.date}: ${formatNumber(day.totalTokens)} tokens`}
+            title={t("usage.chartTooltip", {
+              date: day.date,
+              value: formatNumber(day.totalTokens),
+            })}
           />
           <span className="text-[9px] text-white/30">{day.date.slice(5)}</span>
         </div>
@@ -255,6 +241,7 @@ function emptyDraft(): AccountDraft {
 }
 
 function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalProps) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<AccountDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -282,7 +269,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
       onClose();
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : "Unable to add this account.";
+        err instanceof Error ? err.message : t("usage.addFailed");
       setFormError(message);
       onError(message);
     } finally {
@@ -307,16 +294,16 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="add-account-title" className="text-lg font-medium text-white/90">
-              Add Sub2API Account
+              {t("add.title")}
             </h2>
             <p className="mt-1 text-xs leading-5 text-white/45">
-              Enter the relay URL and the account credentials to track its token usage.
+              {t("add.description")}
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close add account dialog"
-            title="Close"
+            aria-label={t("usage.closeAddDialog")}
+            title={t("usage.closeDialog")}
             onClick={onClose}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white/85"
           >
@@ -330,14 +317,14 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               htmlFor="account-name"
               className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/55"
             >
-              Display Name
+              {t("add.displayName")}
             </label>
             <input
               id="account-name"
               type="text"
               value={draft.name}
               onChange={(event) => updateDraft("name", event.target.value)}
-              placeholder="My primary relay"
+              placeholder={t("add.displayNamePlaceholder")}
               autoFocus
               className="w-full rounded-xl border border-white/10 bg-white/[0.07] px-4 py-3 text-sm text-white/90 outline-none transition-all placeholder:text-white/25 focus:border-white/30 focus:bg-white/[0.10]"
             />
@@ -348,7 +335,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               htmlFor="account-base-url"
               className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/55"
             >
-              Sub2API Relay URL
+              {t("add.relayUrl")}
             </label>
             <input
               id="account-base-url"
@@ -359,7 +346,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="w-full rounded-xl border border-white/10 bg-white/[0.07] px-4 py-3 text-sm text-white/90 outline-none transition-all placeholder:text-white/25 focus:border-white/30 focus:bg-white/[0.10]"
             />
             <p className="mt-2 text-[11px] leading-4 text-white/35">
-              The site URL or its /api/v1 endpoint. Each account can use a different relay.
+              {t("add.relayUrlHint")}
             </p>
           </div>
 
@@ -368,7 +355,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               htmlFor="account-username"
               className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/55"
             >
-              Sub2API Username / Email
+              {t("add.username")}
             </label>
             <input
               id="account-username"
@@ -386,7 +373,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               htmlFor="account-password"
               className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/55"
             >
-              Password
+              {t("add.password")}
             </label>
             <input
               id="account-password"
@@ -398,8 +385,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="w-full rounded-xl border border-white/10 bg-white/[0.07] px-4 py-3 text-sm text-white/90 outline-none transition-all placeholder:text-white/25 focus:border-white/30 focus:bg-white/[0.10]"
             />
             <p className="mt-2 text-[11px] leading-4 text-white/35">
-              Used to sign in. With “Remember password”, it is stored obfuscated on this
-              machine only, so an expired session can be renewed automatically.
+              {t("add.passwordHint")}
             </p>
           </div>
 
@@ -411,7 +397,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="mt-0.5 h-4 w-4 accent-white"
             />
             <span className="text-sm text-white/75">
-              Remember password and sign in automatically when the session expires
+              {t("add.rememberPassword")}
             </span>
           </label>
 
@@ -423,7 +409,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="h-4 w-4 accent-white"
             />
             <span className="text-sm text-white/75">
-              Include this account in total usage
+              {t("add.includeInTotals")}
             </span>
           </label>
 
@@ -435,7 +421,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               onClick={onClose}
               className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white/80"
             >
-              Cancel
+              {t("usage.cancel")}
             </button>
             <button
               type="submit"
@@ -443,7 +429,7 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-              {saving ? "Signing in..." : "Sign In & Add"}
+              {saving ? t("usage.signingIn") : t("add.submit")}
             </button>
           </div>
         </form>
@@ -470,6 +456,7 @@ function ReLoginModal({
   onDone,
   onError,
 }: ReLoginModalProps) {
+  const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -491,7 +478,7 @@ function ReLoginModal({
     event.preventDefault();
     if (!account) return;
     if (!password) {
-      setFormError("Enter the account password.");
+      setFormError(t("relogin.emptyPassword"));
       return;
     }
     setSaving(true);
@@ -506,7 +493,7 @@ function ReLoginModal({
       onClose();
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : "Unable to sign in again.";
+        err instanceof Error ? err.message : t("usage.reloginFailed");
       setFormError(message);
       onError(message);
     } finally {
@@ -531,28 +518,24 @@ function ReLoginModal({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="relogin-title" className="text-lg font-medium text-white/90">
-              {enableAuto ? "Enable automatic sign-in" : "Sign in again"}
+              {enableAuto ? t("relogin.titleEnable") : t("relogin.titleSignIn")}
             </h2>
             <p className="mt-1 text-xs leading-5 text-white/45">
-              {enableAuto ? (
-                <>
-                  Confirm the password for{" "}
-                  <span className="text-white/70">{account.name}</span> ({account.username}).
-                  It is stored obfuscated on this machine and used to renew the session
-                  whenever it expires.
-                </>
-              ) : (
-                <>
-                  Token expired for <span className="text-white/70">{account.name}</span> (
-                  {account.username}). Re-enter the password to refresh the session.
-                </>
-              )}
+              {enableAuto
+                ? t("relogin.enableDescription", {
+                    name: account.name,
+                    username: account.username,
+                  })
+                : t("relogin.signInDescription", {
+                    name: account.name,
+                    username: account.username,
+                  })}
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close re-login dialog"
-            title="Close"
+            aria-label={t("usage.closeReloginDialog")}
+            title={t("usage.closeDialog")}
             onClick={onClose}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/45 transition-colors hover:bg-white/10 hover:text-white/85"
           >
@@ -566,7 +549,7 @@ function ReLoginModal({
               htmlFor="relogin-password"
               className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/55"
             >
-              Password
+              {t("add.password")}
             </label>
             <input
               id="relogin-password"
@@ -589,7 +572,7 @@ function ReLoginModal({
                 className="mt-0.5 h-4 w-4 accent-white"
               />
               <span className="text-sm text-white/75">
-                Remember the password so this account signs itself in next time
+                {t("relogin.remember")}
               </span>
             </label>
           )}
@@ -602,7 +585,7 @@ function ReLoginModal({
               onClick={onClose}
               className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white/80"
             >
-              Cancel
+              {t("usage.cancel")}
             </button>
             <button
               type="submit"
@@ -610,7 +593,11 @@ function ReLoginModal({
               className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-              {saving ? "Signing in..." : enableAuto ? "Save & Sign In" : "Sign In"}
+              {saving
+                ? t("usage.signingIn")
+                : enableAuto
+                  ? t("relogin.submitEnable")
+                  : t("relogin.submitSignIn")}
             </button>
           </div>
         </form>
@@ -663,6 +650,7 @@ async function fetchAccountData(account: Account): Promise<{
 }
 
 export default function TotalUsage() {
+  const { t } = useI18n();
   const [accounts, setAccounts] = useState<Account[]>(() => loadAccounts());
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -731,7 +719,7 @@ export default function TotalUsage() {
         const error =
           result.reason instanceof Error
             ? result.reason.message
-            : "Failed to load usage for this account.";
+            : t("dashboard.loadFailed");
         recordUsageError(account.id, error);
 
         const hasData =
@@ -758,7 +746,7 @@ export default function TotalUsage() {
       setLoading(false);
       syncingRef.current = false;
     }
-  }, [refreshAccounts]);
+  }, [refreshAccounts, t]);
 
   useEffect(() => {
     void loadUsage();
@@ -791,7 +779,7 @@ export default function TotalUsage() {
       await activateAccount(account.id);
       refreshAccounts();
     } catch (err: unknown) {
-      setPageError(err instanceof Error ? err.message : "Unable to switch account.");
+      setPageError(err instanceof Error ? err.message : t("usage.switchFailed"));
     }
   }
 
@@ -802,11 +790,7 @@ export default function TotalUsage() {
   }
 
   function handleDelete(account: Account) {
-    if (
-      !window.confirm(
-        `Delete account "${account.name}"?\nThe remote Sub2API account is not affected. Its locally stored usage history stays in place.`
-      )
-    ) {
+    if (!window.confirm(t("usage.deleteConfirm", { name: account.name }))) {
       return;
     }
     deleteAccount(account.id);
@@ -821,12 +805,12 @@ export default function TotalUsage() {
     if (account.autoRelogin && hasStoredPassword(account)) {
       try {
         await autoReloginAccount(account.id);
-        setStatusNote(`Signed in again automatically for ${account.name}.`);
+        setStatusNote(t("usage.autoSignedInOne", { name: account.name }));
         refreshAccounts();
         void loadUsage({ background: true });
       } catch (err: unknown) {
         const message =
-          err instanceof Error ? err.message : "Unable to sign in again.";
+          err instanceof Error ? err.message : t("usage.reloginFailed");
         setPageError(message);
         setReloginAccount(account);
         setReloginMode("relogin");
@@ -848,19 +832,15 @@ export default function TotalUsage() {
       setReloginOpen(true);
       return;
     }
-    if (
-      !window.confirm(
-        `Forget the saved password for "${account.name}" and turn automatic sign-in off?`
-      )
-    ) {
+    if (!window.confirm(t("usage.forgetConfirm", { name: account.name }))) {
       return;
     }
     try {
       setAccountAutoRelogin(account.id, false);
-      setStatusNote(`Automatic sign-in disabled for ${account.name}.`);
+      setStatusNote(t("usage.autoSignInDisabled", { name: account.name }));
       refreshAccounts();
     } catch (err: unknown) {
-      setPageError(err instanceof Error ? err.message : "Unable to change the setting.");
+      setPageError(err instanceof Error ? err.message : t("usage.settingFailed"));
     }
   }
 
@@ -870,17 +850,13 @@ export default function TotalUsage() {
       downloadBackup();
       void copyBackupToClipboard()
         .then(() => {
-          setStatusNote(
-            "Backup downloaded and copied to the clipboard (accounts + local usage history)."
-          );
+          setStatusNote(t("usage.backupDone"));
         })
         .catch(() => {
-          setStatusNote(
-            "Backup downloaded. Clipboard copy is unavailable in this window."
-          );
+          setStatusNote(t("usage.backupDoneNoClipboard"));
         });
     } catch (err: unknown) {
-      setPageError(err instanceof Error ? err.message : "Unable to create a backup.");
+      setPageError(err instanceof Error ? err.message : t("usage.backupFailed"));
     }
   }
 
@@ -896,16 +872,20 @@ export default function TotalUsage() {
       refreshAccounts();
       void loadUsage({ background: true });
       const parts = [
-        `Restored ${summary.accountsAdded} new account(s)`,
-        `${summary.accountsUpdated} merged`,
-        `${summary.snapshotsMerged} usage snapshot(s) merged`,
+        t("usage.restoreSummary", {
+          added: summary.accountsAdded,
+          updated: summary.accountsUpdated,
+          snapshots: summary.snapshotsMerged,
+        }),
       ];
       if (summary.passwordsRestored > 0) {
-        parts.push(`${summary.passwordsRestored} saved password(s) usable`);
+        parts.push(t("usage.restorePasswords", { count: summary.passwordsRestored }));
       }
       if (summary.passwordsUnavailable > 0) {
         parts.push(
-          `${summary.passwordsUnavailable} saved password(s) need to be entered again on this device`
+          t("usage.restorePasswordsUnavailable", {
+            count: summary.passwordsUnavailable,
+          })
         );
       }
       setStatusNote(parts.join(" · ") + ".");
@@ -913,7 +893,7 @@ export default function TotalUsage() {
       setPageError(
         err instanceof BackupError || err instanceof Error
           ? err.message
-          : "Unable to restore that backup."
+          : t("usage.restoreFailed")
       );
     }
   }
@@ -922,12 +902,15 @@ export default function TotalUsage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-light tracking-wide text-white/90">Total Usage</h1>
+          <h1 className="text-xl font-light tracking-wide text-white/90">{t("usage.title")}</h1>
           {lastUpdate && (
             <p className="mt-0.5 text-[10px] text-white/30">
-              Updated {lastUpdate.toLocaleTimeString()} · {accounts.length} account
-              {accounts.length === 1 ? "" : "s"} · {enabledCount} enabled ·{" "}
-              {storedPasswordCount} with automatic sign-in
+              {t("usage.summary", {
+                time: formatClock(lastUpdate),
+                accounts: accounts.length,
+                enabled: enabledCount,
+                passwords: storedPasswordCount,
+              })}
             </p>
           )}
         </div>
@@ -935,20 +918,20 @@ export default function TotalUsage() {
           <button
             type="button"
             onClick={handleBackup}
-            title="Download a JSON backup of accounts and local usage history"
+            title={t("usage.backupTitle")}
             className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
           >
             <DatabaseBackup size={14} />
-            <span>Backup</span>
+            <span>{t("usage.backup")}</span>
           </button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title="Restore accounts and usage history from a backup file"
+            title={t("usage.restoreTitle")}
             className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
           >
             <Upload size={14} />
-            <span>Restore</span>
+            <span>{t("usage.restore")}</span>
           </button>
           <input
             ref={fileInputRef}
@@ -963,12 +946,12 @@ export default function TotalUsage() {
             className="flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white/85 transition-all hover:bg-white/15"
           >
             <Plus size={15} />
-            Add Account
+            {t("usage.addAccount")}
           </button>
           <button
             type="button"
-            aria-label="Refresh total usage"
-            title="Refresh total usage"
+            aria-label={t("usage.refresh")}
+            title={t("usage.refresh")}
             onClick={() => void loadUsage()}
             className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/5 text-white/40 transition-all hover:bg-white/10 hover:text-white/70"
           >
@@ -985,88 +968,96 @@ export default function TotalUsage() {
       )}
       {failedCount > 0 && (
         <p role="status" className="text-xs text-amber-300">
-          {failedCount} enabled account(s) have no saved data yet.
+          {t("usage.noDataYet", { count: failedCount })}
         </p>
       )}
       {offlineCount > 0 && (
         <p role="status" className="text-xs text-sky-300">
-          {offlineCount} account(s) are offline — showing the locally saved totals.
+          {t("usage.offlineCount", { count: offlineCount })}
         </p>
       )}
       {autoSignedInRows.length > 0 && (
         <p role="status" className="text-xs text-emerald-300/90">
-          Signed in again automatically:{" "}
-          {autoSignedInRows.map((row) => row.account.name).join(", ")}.
+          {t("usage.autoSignedIn", {
+            names: autoSignedInRows.map((row) => row.account.name).join(", "),
+          })}
         </p>
       )}
       {refreshedRows.length > 0 && (
         <p role="status" className="text-[11px] text-white/35">
-          Session refreshed with the refresh token:{" "}
-          {refreshedRows.map((row) => row.account.name).join(", ")}.
+          {t("usage.sessionRefreshed", {
+            names: refreshedRows.map((row) => row.account.name).join(", "),
+          })}
         </p>
       )}
       {resetRows.length > 0 && (
         <p role="status" className="text-xs text-amber-300">
           <History size={12} className="mr-1 inline" />
-          The relay cleared its usage data for{" "}
-          {resetRows
-            .map((row) => `${row.account.name} (${formatDateTime(row.lastResetAt ?? "")})`)
-            .join(", ")}
-          . Local history was kept and keeps growing from the new relay numbers.
+          {t("usage.resetNotice", {
+            list: resetRows
+              .map(
+                (row) =>
+                  `${row.account.name} (${formatDateTime(row.lastResetAt)})`
+              )
+              .join(", "),
+          })}
         </p>
       )}
 
       <div className="grid grid-cols-2 gap-4">
         <StatCard
           icon={<Zap size={20} />}
-          label="ACCOUNTS TOTAL TOKENS"
+          label={t("usage.accountsTotalTokens")}
           value={loading ? "---" : formatNumber(totals.totalTokens)}
-          sublabel={`Local accumulated history · relay reports ${formatNumber(
-            totals.serverTokens
-          )} tokens`}
+          sublabel={t("usage.accountsTotalTokensHint", {
+            value: formatNumber(totals.serverTokens),
+          })}
           highlight
         />
         <StatCard
           icon={<Activity size={18} />}
-          label="Total Requests"
+          label={t("usage.totalRequests")}
           value={loading ? "---" : formatNumber(totals.totalRequests)}
-          sublabel={`Local accumulated · relay reports ${formatNumber(
-            totals.serverRequests
-          )}`}
+          sublabel={t("usage.totalRequestsHint", {
+            value: formatNumber(totals.serverRequests),
+          })}
         />
         <StatCard
           icon={<DollarSign size={18} />}
-          label="Total Cost"
+          label={t("usage.totalCost")}
           value={loading ? "$---" : formatCost(totals.totalCost)}
-          sublabel={`Local accumulated · relay reports ${formatCost(totals.serverCost)}`}
+          sublabel={t("usage.totalCostHint", {
+            value: formatCost(totals.serverCost),
+          })}
         />
         <StatCard
           icon={<ChartPie size={18} />}
-          label="Active Accounts"
+          label={t("usage.activeAccounts")}
           value={String(enabledCount)}
-          sublabel={`${accounts.length} configured · ${offlineCount} offline`}
+          sublabel={t("usage.activeAccountsHint", {
+            accounts: accounts.length,
+            offline: offlineCount,
+          })}
         />
       </div>
 
       <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-5 backdrop-blur-xl">
         <h2 className="mb-4 text-sm font-medium uppercase tracking-wider text-white/55">
-          Token usage · last 7 days
+          {t("usage.chartTitle")}
         </h2>
         <DailyBar days={snapshotDays} />
       </div>
 
       <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-5 backdrop-blur-xl">
         <h2 className="text-sm font-medium uppercase tracking-wider text-white/55">
-          Accounts
+          {t("usage.accountsTitle")}
         </h2>
 
         {accounts.length === 0 ? (
           <div className="py-10 text-center">
             <UserRound size={32} className="mx-auto text-white/25" />
-            <p className="mt-3 text-sm text-white/50">No accounts configured</p>
-            <p className="mt-1 text-xs text-white/30">
-              Add a Sub2API relay account to start tracking its token usage
-            </p>
+            <p className="mt-3 text-sm text-white/50">{t("usage.noAccounts")}</p>
+            <p className="mt-1 text-xs text-white/30">{t("usage.noAccountsHint")}</p>
           </div>
         ) : (
           <div className="mt-4 space-y-2">
@@ -1113,23 +1104,25 @@ export default function TotalUsage() {
                           }`}
                         />
                         {row?.status === "offline"
-                          ? "Offline (saved)"
+                          ? t("usage.statusOffline")
                           : row?.status === "error"
-                            ? "Error"
+                            ? t("usage.statusError")
                             : isEnabled
-                              ? "Enabled"
-                              : "Disabled"}
+                              ? t("usage.statusEnabled")
+                              : t("usage.statusDisabled")}
                       </span>
                       {savedPassword && (
                         <span
                           title={
                             account.autoRelogin
-                              ? `Automatic sign-in is on (password stored on this device${
-                                  account.lastAutoLoginAt
-                                    ? `, last used ${formatDateTime(account.lastAutoLoginAt)}`
-                                    : ""
-                                })`
-                              : "Password stored but automatic sign-in is off"
+                              ? t("usage.autoSignInOnTitle", {
+                                  lastUsed: account.lastAutoLoginAt
+                                    ? t("usage.autoSignInLastUsed", {
+                                        time: formatDateTime(account.lastAutoLoginAt),
+                                      })
+                                    : "",
+                                })
+                              : t("usage.passwordSavedTitle")
                           }
                           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
                             account.autoRelogin
@@ -1138,33 +1131,35 @@ export default function TotalUsage() {
                           }`}
                         >
                           <ShieldCheck size={10} />
-                          {account.autoRelogin ? "Auto sign-in" : "Password saved"}
+                          {account.autoRelogin
+                            ? t("usage.badgeAutoSignIn")
+                            : t("usage.badgePasswordSaved")}
                         </span>
                       )}
                       {unreadablePassword && (
                         <span
-                          title="A password is stored for this account, but it was saved with another installation key (for example after clearing the app data). Enter it again to re-enable automatic sign-in."
+                          title={t("usage.passwordUnavailableTitle")}
                           className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300/90"
                         >
                           <CircleAlert size={10} />
-                          Password unavailable on this device
+                          {t("usage.badgePasswordUnavailable")}
                         </span>
                       )}
                       {row?.autoSignedIn && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
                           <KeyRound size={10} />
-                          Signed in automatically
+                          {t("usage.badgeSignedInAutomatically")}
                         </span>
                       )}
                       {isRecentReset(row?.lastResetAt) && (
                         <span
-                          title={`The relay reported lower totals on ${formatDateTime(
-                            row?.lastResetAt ?? ""
-                          )}. Local history was kept.`}
+                          title={t("usage.resetChipTitle", {
+                            time: formatDateTime(row?.lastResetAt),
+                          })}
                           className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300"
                         >
                           <History size={10} />
-                          Relay data cleared · local history kept
+                          {t("usage.badgeRelayCleared")}
                         </span>
                       )}
                     </div>
@@ -1178,7 +1173,7 @@ export default function TotalUsage() {
                       <div className="shrink-0 text-right">
                         <p className="flex items-center justify-end gap-1 text-[11px] text-red-300">
                           <CircleAlert size={12} />
-                          No saved data
+                          {t("usage.noSavedData")}
                         </p>
                         <p className="mt-0.5 max-w-[220px] truncate text-[10px] text-white/30">
                           {row.error}
@@ -1187,29 +1182,33 @@ export default function TotalUsage() {
                     ) : (
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-medium tabular-nums text-white/75">
-                          {formatNumber(row.totalTokens)} tokens
+                          {t("usage.tokensValue", { value: formatNumber(row.totalTokens) })}
                         </p>
                         <p className="text-[11px] tabular-nums text-white/35">
-                          {formatNumber(row.totalRequests)} requests ·{" "}
-                          {formatCost(row.totalCost)}
+                          {t("usage.requestsAndCost", {
+                            requests: formatNumber(row.totalRequests),
+                            cost: formatCost(row.totalCost),
+                          })}
                         </p>
                         <p className="text-[10px] tabular-nums text-white/25">
-                          relay reports {formatNumber(row.serverTokens)} tokens ·{" "}
-                          {formatNumber(row.serverRequests)} requests ·{" "}
-                          {formatCost(row.serverCost)}
+                          {t("usage.relayReports", {
+                            tokens: formatNumber(row.serverTokens),
+                            requests: formatNumber(row.serverRequests),
+                            cost: formatCost(row.serverCost),
+                          })}
                         </p>
                       </div>
                     )
                   ) : (
                     <div className="shrink-0 text-right">
-                      <p className="text-[11px] text-white/30">Not included</p>
+                      <p className="text-[11px] text-white/30">{t("usage.notIncluded")}</p>
                     </div>
                   )}
 
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      title="Switch to this account"
+                      title={t("usage.switchTo")}
                       onClick={() => void handleSwitch(account)}
                       className="flex h-8 w-8 items-center justify-center rounded-xl text-white/40 transition-all hover:bg-white/10 hover:text-sky-300"
                     >
@@ -1219,8 +1218,8 @@ export default function TotalUsage() {
                       type="button"
                       title={
                         savedPassword
-                          ? "Sign in again with the saved password (or turn it off)"
-                          : "Sign in again (refresh an expired token)"
+                          ? t("usage.keyWithPassword")
+                          : t("usage.keyWithoutPassword")
                       }
                       onClick={() => void handleKey(account)}
                       className="flex h-8 w-8 items-center justify-center rounded-xl text-white/40 transition-all hover:bg-white/10 hover:text-emerald-300"
@@ -1231,8 +1230,8 @@ export default function TotalUsage() {
                       type="button"
                       title={
                         account.autoRelogin
-                          ? "Automatic sign-in is on — click to forget the password"
-                          : "Remember this password so the account can sign itself back in"
+                          ? t("usage.autoSignInOnClick")
+                          : t("usage.rememberPasswordTitle")
                       }
                       onClick={() => void handleToggleAutoRelogin(account)}
                       className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all hover:bg-white/10 ${
@@ -1243,7 +1242,7 @@ export default function TotalUsage() {
                     </button>
                     <button
                       type="button"
-                      title={isEnabled ? "Disable account" : "Enable account"}
+                      title={isEnabled ? t("usage.disableAccount") : t("usage.enableAccount")}
                       onClick={() => handleToggleEnabled(account)}
                       className={`flex h-8 w-8 items-center justify-center rounded-xl text-white/40 transition-all hover:bg-white/10 ${
                         isEnabled ? "hover:text-amber-300" : "hover:text-emerald-300"
@@ -1253,7 +1252,7 @@ export default function TotalUsage() {
                     </button>
                     <button
                       type="button"
-                      title="Delete account"
+                      title={t("usage.deleteAccount")}
                       onClick={() => handleDelete(account)}
                       className="flex h-8 w-8 items-center justify-center rounded-xl text-white/40 transition-all hover:bg-white/10 hover:text-red-400/70"
                     >
@@ -1268,11 +1267,7 @@ export default function TotalUsage() {
       </div>
 
       <p className="text-[11px] leading-5 text-white/30">
-        Totals are accumulated on this machine from every relay reading, so clearing or
-        resetting usage data on the relay no longer erases them. Passwords saved for
-        automatic sign-in stay in this app&apos;s local storage. Use{" "}
-        <span className="text-white/45">Backup</span> to keep a JSON copy of accounts and
-        history outside the app.
+        {t("usage.localHistoryNote")}
       </p>
 
       <AddAccountModal

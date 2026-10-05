@@ -1,18 +1,19 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { t } from "./i18n";
 
 export const DEFAULT_API_URL = "";
 const API_URL_STORAGE_KEY = "api_base_url";
 
 export function normalizeApiBaseUrl(value: string): string {
   const input = value.trim();
-  if (!input) throw new Error("Enter a Sub2API website URL.");
+  if (!input) throw new Error(t("error.enterSiteUrl"));
 
   const withProtocol = /^https?:\/\//i.test(input)
     ? input
     : `https://${input}`;
   const url = new URL(withProtocol);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("Only HTTP and HTTPS URLs are supported.");
+    throw new Error(t("error.onlyHttp"));
   }
 
   let pathname = url.pathname.replace(/\/+$/, "");
@@ -54,7 +55,7 @@ export async function checkApiConnection(value: string): Promise<ConnectionCheck
   } catch (reason: unknown) {
     return {
       reachable: false,
-      detail: reason instanceof Error ? reason.message : "Invalid URL.",
+      detail: reason instanceof Error ? reason.message : t("error.invalidUrl"),
     };
   }
 
@@ -69,7 +70,7 @@ export async function checkApiConnection(value: string): Promise<ConnectionCheck
     return {
       reachable: true,
       status: response.status,
-      detail: `${baseUrl} responded with HTTP ${response.status}.`,
+      detail: t("error.respondedWith", { url: baseUrl, status: response.status }),
     };
   } catch (error: unknown) {
     return {
@@ -221,7 +222,7 @@ export async function refreshStoredAccessToken(): Promise<string | null> {
         if (currentAccessToken && currentAccessToken !== accessTokenBeforeLock) {
           return currentAccessToken;
         }
-        throw new ApiError("Session changed while refreshing.", 401);
+        throw new ApiError(t("error.sessionChangedWhileRefreshing"), 401);
       }
 
       if (
@@ -246,10 +247,10 @@ export async function refreshStoredAccessToken(): Promise<string | null> {
       });
 
       if (!data.access_token) {
-        throw new ApiError("Refresh response did not include access_token.", 200);
+        throw new ApiError(t("error.refreshNoToken"), 200);
       }
       if (getStoredRefreshToken() !== refreshToken) {
-        throw new ApiError("Session changed while refreshing.", 401);
+        throw new ApiError(t("error.sessionChangedWhileRefreshing"), 401);
       }
 
       persistAuthTokens(data);
@@ -353,9 +354,7 @@ async function request<T>(
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error("[api] request failed:", reason);
-      throw new ApiError(
-        `Unable to connect to the server (${reason})`
-      );
+      throw new ApiError(t("error.connectFailed", { reason }));
     }
   };
 
@@ -376,7 +375,7 @@ async function request<T>(
     } catch {
       clearStoredTokens();
       window.dispatchEvent(new Event("auth-expired"));
-      throw new ApiError("Session expired. Please log in again.", 401);
+      throw new ApiError(t("error.sessionExpired"), 401);
     }
   }
 
@@ -406,7 +405,7 @@ async function request<T>(
     throw new ApiError(
       envelope?.message ||
         envelope?.detail ||
-        `Server request failed (HTTP ${response.status})`,
+        t("error.serverRequestFailed", { status: response.status }),
       response.status,
       envelope?.code
     );
@@ -414,7 +413,7 @@ async function request<T>(
 
   if (envelope && typeof envelope.code === "number" && envelope.code !== 0) {
     throw new ApiError(
-      envelope.message || envelope.detail || "The server returned an error.",
+      envelope.message || envelope.detail || t("error.serverReturnedError"),
       response.status,
       envelope.code
     );
@@ -446,7 +445,7 @@ async function requestWithFallback<T>(
     }
   }
 
-  throw new ApiError("No compatible server endpoint was found.", 404);
+  throw new ApiError(t("error.noCompatibleEndpoint"), 404);
 }
 
 export async function login(email: string, password: string) {
@@ -456,7 +455,7 @@ export async function login(email: string, password: string) {
   });
 
   if (!data.access_token) {
-    throw new ApiError("Login response did not include access_token.", 200);
+    throw new ApiError(t("error.loginNoToken"), 200);
   }
 
   persistAuthTokens(data);
@@ -481,7 +480,7 @@ export async function loginWithBaseUrl(
   );
 
   if (!data.access_token) {
-    throw new ApiError("Login response did not include access_token.", 200);
+    throw new ApiError(t("error.loginNoToken"), 200);
   }
 
   return data;
@@ -617,14 +616,17 @@ export async function checkAccountConnection(
     await requestForAccount<unknown>("/auth/me", { method: "GET" }, context);
     return {
       reachable: true,
-      detail: `${context.baseUrl} authenticated successfully.`,
+      detail: t("error.authenticatedOk", { url: context.baseUrl }),
     };
   } catch (error: unknown) {
     if (error instanceof ApiError && typeof error.status === "number") {
       return {
         reachable: true,
         status: error.status,
-        detail: `${context.baseUrl} responded with HTTP ${error.status}.`,
+        detail: t("error.respondedWith", {
+          url: context.baseUrl,
+          status: error.status,
+        }),
       };
     }
     return {

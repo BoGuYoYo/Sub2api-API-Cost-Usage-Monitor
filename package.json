@@ -1,13 +1,14 @@
 {
   "name": "api-monitor",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "verify:history": "node --experimental-strip-types scripts/verify-local-history.ts",
+    "verify:i18n": "node --experimental-strip-types scripts/verify-i18n.ts",
     "check:backup": "node --experimental-strip-types scripts/check-backup-file.ts",
     "tauri": "tauri"
   },

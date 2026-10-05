@@ -13,6 +13,7 @@ import {
   saveAccounts,
   type Account,
 } from "./accounts";
+import { t } from "./i18n";
 import {
   getDeviceKey,
   hasDeviceKey,
@@ -102,10 +103,10 @@ function parseBackup(json: string): LocalBackup {
   try {
     parsed = JSON.parse(json);
   } catch {
-    throw new BackupError("That is not valid JSON.");
+    throw new BackupError(t("backup.invalidJson"));
   }
   if (!parsed || typeof parsed !== "object") {
-    throw new BackupError("That file does not contain a backup.");
+    throw new BackupError(t("backup.notABackup"));
   }
   const candidate = parsed as Partial<LocalBackup>;
   const accounts = Array.isArray(candidate.accounts) ? candidate.accounts : [];
@@ -116,7 +117,7 @@ function parseBackup(json: string): LocalBackup {
       ? (candidate.snapshots as Record<string, AccountUsageSnapshot>)
       : {};
   if (accounts.length === 0 && Object.keys(snapshots).length === 0) {
-    throw new BackupError("That backup has no accounts or usage data.");
+    throw new BackupError(t("backup.empty"));
   }
   return {
     app: typeof candidate.app === "string" ? candidate.app : BACKUP_APP_ID,

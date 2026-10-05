@@ -14,6 +14,7 @@
  *      refresh token is gone or rejected — this is what signs an account back
  *      in after the relay expires its session.
  */
+import { t } from "./i18n";
 import {
   ApiError,
   clearStoredTokens,
@@ -242,14 +243,14 @@ export async function addAccount(input: AccountDraft): Promise<Account> {
   const name = input.name.trim();
   const username = input.username.trim();
   const password = input.password;
-  if (!name) throw new Error("Enter an account name.");
-  if (!username) throw new Error("Enter the Sub2API username or email.");
-  if (!password) throw new Error("Enter the account password.");
+  if (!name) throw new Error(t("error.enterAccountName"));
+  if (!username) throw new Error(t("error.enterUsername"));
+  if (!password) throw new Error(t("error.enterPassword"));
 
   const baseUrl = normalizeApiBaseUrl(input.baseUrl);
   const data = await loginWithBaseUrl(baseUrl, username, password);
   if (!data.access_token) {
-    throw new ApiError("Login response did not include access_token.", 200);
+    throw new ApiError(t("error.loginNoToken"), 200);
   }
 
   const account = toAccount({ ...input, baseUrl }, data);
@@ -265,8 +266,8 @@ export async function addAccount(input: AccountDraft): Promise<Account> {
 /** Activate an existing account: swap the global session to its tokens + URL. */
 export async function activateAccount(id: string): Promise<Account> {
   const account = loadAccounts().find((item) => item.id === id);
-  if (!account) throw new Error("Account no longer exists.");
-  if (!account.accessToken) throw new Error("This account has no saved session.");
+  if (!account) throw new Error(t("error.accountNoLongerExists"));
+  if (!account.accessToken) throw new Error(t("error.noSavedSession"));
   applyGlobalSession(account);
   setActiveAccountId(account.id);
   window.dispatchEvent(new Event("auth-changed"));
@@ -287,23 +288,23 @@ export async function enableAutoRelogin(
   password: string
 ): Promise<Account> {
   const existing = loadAccounts().find((account) => account.id === id);
-  if (!existing) throw new Error("Account no longer exists.");
-  if (!password) throw new Error("Enter the account password.");
+  if (!existing) throw new Error(t("error.accountNoLongerExists"));
+  if (!password) throw new Error(t("error.enterPassword"));
 
   const data = await loginWithBaseUrl(existing.baseUrl, existing.username, password);
   if (!data.access_token) {
-    throw new ApiError("Login response did not include access_token.", 200);
+    throw new ApiError(t("error.loginNoToken"), 200);
   }
 
   const stored = obfuscateSecret(password);
-  if (!stored) throw new Error("Unable to store the password on this device.");
+  if (!stored) throw new Error(t("error.secretStoreFailed"));
 
   const updated = updateAccountSession(id, data, {
     password: stored,
     autoRelogin: true,
     lastAutoLoginAt: new Date().toISOString(),
   });
-  if (!updated) throw new Error("Unable to update the account session.");
+  if (!updated) throw new Error(t("error.sessionUpdateFailed"));
   notifyAccountsChanged();
   return updated;
 }
@@ -319,22 +320,22 @@ export async function reloginAccount(
   rememberPassword = true
 ): Promise<Account> {
   const existing = loadAccounts().find((account) => account.id === id);
-  if (!existing) throw new Error("Account no longer exists.");
+  if (!existing) throw new Error(t("error.accountNoLongerExists"));
   if (!password && !hasStoredPassword(existing)) {
-    throw new Error("Enter the account password.");
+    throw new Error(t("error.enterPassword"));
   }
 
   const secret = password || revealSecret(existing.password);
   const data = await loginWithBaseUrl(existing.baseUrl, existing.username, secret);
   if (!data.access_token) {
-    throw new ApiError("Login response did not include access_token.", 200);
+    throw new ApiError(t("error.loginNoToken"), 200);
   }
 
   const updated = updateAccountSession(id, data, {
     password: rememberPassword ? obfuscateSecret(secret) : undefined,
     autoRelogin: rememberPassword && !!obfuscateSecret(secret),
   });
-  if (!updated) throw new Error("Unable to update the account session.");
+  if (!updated) throw new Error(t("error.sessionUpdateFailed"));
   setActiveAccountId(id);
   applyGlobalSession(updated);
   window.dispatchEvent(new Event("auth-changed"));
@@ -382,7 +383,7 @@ export function setAccountAutoRelogin(
 ): Account {
   const accounts = loadAccounts();
   const index = accounts.findIndex((account) => account.id === id);
-  if (index < 0) throw new Error("Account no longer exists.");
+  if (index < 0) throw new Error(t("error.accountNoLongerExists"));
 
   const current = accounts[index];
   if (!enabled) {
@@ -402,8 +403,8 @@ export function setAccountAutoRelogin(
   if (!hasRecoverableSecret(stored)) {
     throw new Error(
       password
-        ? "Unable to store the password on this device."
-        : "Enter the account password to enable automatic sign-in."
+        ? t("error.secretStoreFailed")
+        : t("error.passwordRequiredForAuto")
     );
   }
   const updated: Account = {
@@ -513,9 +514,9 @@ export interface SessionRenewalOptions {
 /** Reason an account could not renew itself. */
 export function sessionRenewalHelp(account: Account): string {
   if (hasStoredPassword(account) && account.autoRelogin) {
-    return `Automatic sign-in failed for ${account.name}. Check the relay URL, the username/password, or sign in again manually.`;
+    return t("error.autoSignInFailed", { name: account.name });
   }
-  return `Session expired for ${account.name}. Open the key icon on its row and sign in again, or turn on "Remember password" to let it sign in automatically next time.`;
+  return t("error.sessionExpiredHelp", { name: account.name });
 }
 
 /**
@@ -553,12 +554,12 @@ async function autoLoginWithPassword(
   const attempt = (async () => {
     const data = await loginWithBaseUrl(account.baseUrl, account.username, secret);
     if (!data.access_token) {
-      throw new ApiError("Login response did not include access_token.", 200);
+      throw new ApiError(t("error.loginNoToken"), 200);
     }
     const updated = updateAccountSession(account.id, data, {
       lastAutoLoginAt: new Date().toISOString(),
     });
-    if (!updated) throw new Error("Unable to update the account session.");
+    if (!updated) throw new Error(t("error.sessionUpdateFailed"));
     notifyAccountsChanged();
     return updated;
   })();
@@ -639,10 +640,10 @@ export async function ensureAccountSession(
  */
 export async function autoReloginAccount(id: string): Promise<Account> {
   const account = loadAccounts().find((item) => item.id === id);
-  if (!account) throw new Error("Account no longer exists.");
+  if (!account) throw new Error(t("error.accountNoLongerExists"));
   if (!account.autoRelogin || !hasStoredPassword(account)) {
     throw new ApiError(
-      `No saved password for ${account.name}; sign in again manually.`,
+      t("error.noSavedPassword", { name: account.name }),
       401
     );
   }

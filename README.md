@@ -4,6 +4,8 @@ A lightweight Windows and macOS desktop monitor for Sub2API-compatible relay ser
 
 ## Features
 
+- **English and 中文 UI** — switch with the language selector at the bottom of the sidebar; the
+  choice is remembered and the first launch follows your system language
 - **No login gate** — launch straight into the Dashboard
 - **Multi-account**: add any number of Sub2API relay accounts (relay URL + username + password)
 - **Free account switching** from the Dashboard without re-entering credentials
@@ -103,7 +105,8 @@ npm run verify:history
 
 It asserts, among other things, that a relay wipe can never shrink the locally kept totals.
 `npm run check:backup -- <file.json>` feeds a backup file through the app's own import code and
-prints the totals the app would end up with.
+prints the totals the app would end up with. `npm run verify:i18n` checks the translation
+dictionary (both languages present, matching `{placeholders}`, no unused keys).
 
 The service address is intentionally not bundled in this repository; each account carries its own relay URL.
 
@@ -121,6 +124,7 @@ npm run tauri build
 | `sub2api_accounts_v3` | Accounts: relay URL, username, session tokens, obfuscated password |
 | `sub2api_usage_snapshots_v3` | Local accumulated totals, relay baseline, reset history, per-day usage |
 | `sub2api_device_key` | Per-installation key used to obfuscate saved passwords |
+| `sub2api_locale` | UI language (`en` / `zh`), written when you switch it |
 
 Snapshots written by older versions (`sub2api_usage_snapshots_v2` / `_v1`) are migrated
 automatically on first read; the older totals become the starting point of the local history.

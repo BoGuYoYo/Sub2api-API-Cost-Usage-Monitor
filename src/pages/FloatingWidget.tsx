@@ -5,6 +5,8 @@ import TitleBar from "../components/TitleBar";
 import { getActiveAccount, requestWithAccountSession } from "../lib/accounts";
 import { fetchAccountDashboardStats, type DashboardStats } from "../lib/api";
 import { syncAccountStats } from "../lib/usage-snapshots";
+import { formatCompactNumber, formatCurrency } from "../lib/format";
+import { useI18n } from "../lib/use-i18n";
 
 function toFiniteNumber(value: unknown): number | null {
   const number = typeof value === "number" ? value : Number(value);
@@ -14,17 +16,17 @@ function toFiniteNumber(value: unknown): number | null {
 function formatNumber(value: unknown): string {
   const number = toFiniteNumber(value);
   if (number === null) return "---";
-  if (number >= 1_000_000) return (number / 1_000_000).toFixed(2) + "M";
-  if (number >= 1_000) return (number / 1_000).toFixed(2) + "K";
-  return number.toLocaleString();
+  return formatCompactNumber(number);
 }
 
 function formatCost(value: unknown): string {
   const number = toFiniteNumber(value);
-  return number === null ? "$---" : "$" + number.toFixed(4);
+  if (number === null) return "$---";
+  return formatCurrency(number);
 }
 
 export default function FloatingWidget() {
+  const { t } = useI18n();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [alwaysOnTop, setAlwaysOnTop] = useState(
     () => localStorage.getItem("floating_always_on_top") !== "false"
@@ -78,12 +80,14 @@ export default function FloatingWidget() {
       <div className="relative z-10 flex flex-1 flex-col justify-between p-4">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">
-            Today's snapshot
+            {t("widget.snapshot")}
           </span>
           <button
             type="button"
-            aria-label={alwaysOnTop ? "Disable always on top" : "Enable always on top"}
-            title={alwaysOnTop ? "Always on top" : "Desktop only"}
+            aria-label={
+              alwaysOnTop ? t("widget.disableAlwaysOnTop") : t("widget.enableAlwaysOnTop")
+            }
+            title={alwaysOnTop ? t("widget.alwaysOnTop") : t("widget.desktopOnly")}
             aria-pressed={alwaysOnTop}
             onClick={toggleAlwaysOnTop}
             className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 text-white/45 transition-colors hover:bg-white/10 hover:text-white/80"
@@ -96,7 +100,7 @@ export default function FloatingWidget() {
           <div className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3">
             <div className="flex items-center gap-2 text-white/45">
               <DollarSign size={14} />
-              <span className="text-[10px] uppercase tracking-wider">Spend</span>
+              <span className="text-[10px] uppercase tracking-wider">{t("widget.spend")}</span>
             </div>
             <p className="mt-1 text-lg font-medium tabular-nums text-white/90">
               {stats ? formatCost(stats.today_actual_cost) : "$---"}
@@ -105,7 +109,7 @@ export default function FloatingWidget() {
           <div className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3">
             <div className="flex items-center gap-2 text-white/45">
               <Zap size={14} />
-              <span className="text-[10px] uppercase tracking-wider">Tokens</span>
+              <span className="text-[10px] uppercase tracking-wider">{t("widget.tokens")}</span>
             </div>
             <p className="mt-1 text-lg font-medium tabular-nums text-white/90">
               {stats ? formatNumber(stats.today_tokens) : "---"}
