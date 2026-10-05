@@ -71,6 +71,21 @@ Restoring on a fresh installation also adopts the encryption key stored in the b
 saved passwords keep working there. On a machine that already has its own accounts, the
 existing key is kept and any password that cannot be read is reported so it can be entered again.
 
+## Recovering history from an older install
+
+Builds before this one overwrote their snapshot with whatever the relay reported, so a relay
+wipe could destroy numbers the app had already seen. Those older values are still in the
+WebView2 LevelDB write-ahead log, and `scripts/recover-from-leveldb.ps1` can dig them out:
+
+```text
+pwsh -File scripts\recover-from-leveldb.ps1 -DryRun   # report only
+pwsh -File scripts\recover-from-leveldb.ps1           # write a restorable backup
+```
+
+It keeps the largest value ever observed per account as the local total, uses the newest relay
+reading as the diff baseline and writes a backup JSON (default: your Downloads folder) that the
+**Restore** button accepts. Close the app before running it so the log is complete.
+
 ## Development
 
 Install dependencies, then start the Tauri development app:
@@ -87,6 +102,8 @@ npm run verify:history
 ```
 
 It asserts, among other things, that a relay wipe can never shrink the locally kept totals.
+`npm run check:backup -- <file.json>` feeds a backup file through the app's own import code and
+prints the totals the app would end up with.
 
 The service address is intentionally not bundled in this repository; each account carries its own relay URL.
 
