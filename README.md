@@ -2,6 +2,18 @@
 
 A lightweight Windows and macOS desktop monitor for Sub2API-compatible relay services.
 
+## Install
+
+Grab a package from the [latest release](https://github.com/BoGuYoYo/Sub2api-API-Cost-Usage-Monitor/releases/latest):
+
+| Asset | Use |
+| --- | --- |
+| `API-Monitor-*-x64-setup.exe` | Recommended — NSIS installer, adds Start menu entries and an uninstaller |
+| `API-Monitor-*-x64.msi` | MSI package for scripted installs |
+| `API-Monitor-*-portable-x64.zip` | Unzip and run `API Monitor.exe`, nothing to install |
+
+Windows needs the WebView2 runtime, which ships with Windows 10/11.
+
 ## Features
 
 - **English and 中文 UI** — switch with the language selector at the bottom of the sidebar; the
@@ -116,6 +128,19 @@ The service address is intentionally not bundled in this repository; each accoun
 npm run build
 npm run tauri build
 ```
+
+## Releasing
+
+Bump `version` in `src-tauri/tauri.conf.json`, build, then publish the bundles
+(NSIS installer, MSI and a portable zip) as a GitHub release:
+
+```text
+pwsh -File scripts\publish-release.ps1 -NotesFile release-notes.md
+```
+
+The script reads the version from the Tauri config, authenticates with the credential git
+already uses for github.com, and skips assets that were uploaded before, so it is safe to
+re-run.
 
 ## Local storage keys
 
