@@ -2,7 +2,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -20,22 +22,29 @@ import {
   CircleAlert,
   ArrowLeftRight,
   KeyRound,
+  ShieldCheck,
+  DatabaseBackup,
+  Upload,
+  History,
 } from "lucide-react";
 import {
   addAccount,
   activateAccount,
+  autoReloginAccount,
   deleteAccount,
-  getAccountRequestContext,
+  enableAutoRelogin,
   getEnabledAccounts,
+  hasStoredPassword,
+  hasUnreadablePassword,
   loadAccounts,
-  refreshAccountToken,
   reloginAccount,
+  requestWithAccountSession,
+  setAccountAutoRelogin,
   setAccountEnabled,
   type Account,
   type AccountDraft,
 } from "../lib/accounts";
 import {
-  ApiError,
   fetchAccountDashboardStats,
   fetchAccountRecentUsage,
   type DashboardStats,
@@ -43,12 +52,23 @@ import {
 import {
   aggregateSnapshots,
   getAccountSnapshot,
-  recordDashboardStats,
+  getLocalCumulative,
+  getServerCumulative,
   recordUsageError,
   recordUsageForAccount,
+  syncAccountStats,
   type AccountUsageSnapshot,
   type DailyUsage,
 } from "../lib/usage-snapshots";
+import {
+  BackupError,
+  copyBackupToClipboard,
+  downloadBackup,
+  importBackup,
+} from "../lib/backup";
+
+/** How often the page re-reads every enabled account. */
+const SYNC_INTERVAL_MS = 60_000;
 
 function formatNumber(value: number): string {
   if (value >= 1_000_000) return (value / 1_000_000).toFixed(2) + "M";
@@ -67,6 +87,17 @@ function formatDate(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function getDateRange(): { startDate: string; endDate: string } {
   const endDate = new Date();
   const startDate = new Date(endDate);
@@ -74,50 +105,68 @@ function getDateRange(): { startDate: string; endDate: string } {
   return { startDate: formatDate(startDate), endDate: formatDate(endDate) };
 }
 
+/** Relay resets older than this are summarised in the repo of history only. */
+const RESET_NOTICE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isRecentReset(value?: string): boolean {
+  if (!value) return false;
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return false;
+  return Date.now() - time <= RESET_NOTICE_WINDOW_MS;
+}
+
 function toFiniteNumber(value: unknown): number | null {
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function snapshotCumulative(snapshot: AccountUsageSnapshot | null): {
-  totalTokens: number;
-  totalRequests: number;
-  totalCost: number;
-  todayTokens: number;
-} {
-  const cumulative = snapshot?.cumulative;
-  return {
-    totalTokens: toFiniteNumber(cumulative?.totalTokens) ?? 0,
-    totalRequests: toFiniteNumber(cumulative?.totalRequests) ?? 0,
-    totalCost: toFiniteNumber(cumulative?.totalCost) ?? 0,
-    todayTokens: toFiniteNumber(cumulative?.todayTokens) ?? 0,
-  };
-}
-
-interface AccountRow {
-  account: Account;
-  status: "success" | "error" | "offline";
-  error?: string;
-  totalTokens: number;
-  totalRequests: number;
-  totalCost: number;
-  todayTokens: number;
 }
 
 interface Totals {
   totalTokens: number;
   totalRequests: number;
   totalCost: number;
-  todayTokens: number;
+  serverTokens: number;
+  serverRequests: number;
+  serverCost: number;
+}
+
+interface AccountRow {
+  account: Account;
+  status: "success" | "error" | "offline";
+  error?: string;
+  /** Local accumulated totals (never decrease). */
+  totalTokens: number;
+  totalRequests: number;
+  totalCost: number;
+  /** What the relay reports right now. */
+  serverTokens: number;
+  serverRequests: number;
+  serverCost: number;
+  /** When the relay last reported lower totals than before. */
+  lastResetAt?: string;
+  /** The session was renewed with the saved password during this sync. */
+  autoSignedIn?: boolean;
+  /** The session was renewed with the refresh token during this sync. */
+  refreshed?: boolean;
 }
 
 function toSummary(rows: AccountRow[]): Totals {
-  return {
-    totalTokens: rows.reduce((total, item) => total + item.totalTokens, 0),
-    totalRequests: rows.reduce((total, item) => total + item.totalRequests, 0),
-    totalCost: rows.reduce((total, item) => total + item.totalCost, 0),
-    todayTokens: rows.reduce((total, item) => total + item.todayTokens, 0),
+  const totals: Totals = {
+    totalTokens: 0,
+    totalRequests: 0,
+    totalCost: 0,
+    serverTokens: 0,
+    serverRequests: 0,
+    serverCost: 0,
   };
+  for (const row of rows) {
+    totals.totalTokens += row.totalTokens;
+    totals.totalRequests += row.totalRequests;
+    totals.totalCost += row.totalCost;
+    totals.serverTokens += row.serverTokens;
+    totals.serverRequests += row.serverRequests;
+    totals.serverCost += row.serverCost;
+  }
+  return totals;
 }
 
 interface StatCardProps {
@@ -195,7 +244,14 @@ interface AddAccountModalProps {
 }
 
 function emptyDraft(): AccountDraft {
-  return { name: "", baseUrl: "", username: "", password: "", enabled: true };
+  return {
+    name: "",
+    baseUrl: "",
+    username: "",
+    password: "",
+    rememberPassword: true,
+    enabled: true,
+  };
 }
 
 function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalProps) {
@@ -342,9 +398,22 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
               className="w-full rounded-xl border border-white/10 bg-white/[0.07] px-4 py-3 text-sm text-white/90 outline-none transition-all placeholder:text-white/25 focus:border-white/30 focus:bg-white/[0.10]"
             />
             <p className="mt-2 text-[11px] leading-4 text-white/35">
-              Your password is only used once to sign in and is never stored.
+              Used to sign in. With “Remember password”, it is stored obfuscated on this
+              machine only, so an expired session can be renewed automatically.
             </p>
           </div>
+
+          <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3">
+            <input
+              type="checkbox"
+              checked={draft.rememberPassword}
+              onChange={(event) => updateDraft("rememberPassword", event.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-white"
+            />
+            <span className="text-sm text-white/75">
+              Remember password and sign in automatically when the session expires
+            </span>
+          </label>
 
           <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3">
             <input
@@ -386,24 +455,37 @@ function AddAccountModal({ open, onClose, onAdded, onError }: AddAccountModalPro
 interface ReLoginModalProps {
   open: boolean;
   account: Account | null;
+  /** "relogin" refreshes a session; "enable-auto" stores the password too. */
+  mode: "relogin" | "enable-auto";
   onClose: () => void;
   onDone: () => void;
   onError: (message: string) => void;
 }
 
-function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalProps) {
+function ReLoginModal({
+  open,
+  account,
+  mode,
+  onClose,
+  onDone,
+  onError,
+}: ReLoginModalProps) {
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
   useEffect(() => {
     if (open) {
       setPassword("");
+      setRemember(true);
       setFormError("");
     }
-  }, [open]);
+  }, [open, account?.id]);
 
   if (!open || !account) return null;
+
+  const enableAuto = mode === "enable-auto";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -415,7 +497,11 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
     setSaving(true);
     setFormError("");
     try {
-      await reloginAccount(account.id, password);
+      if (enableAuto) {
+        await enableAutoRelogin(account.id, password);
+      } else {
+        await reloginAccount(account.id, password, remember);
+      }
       onDone();
       onClose();
     } catch (err: unknown) {
@@ -445,11 +531,22 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="relogin-title" className="text-lg font-medium text-white/90">
-              Sign in again
+              {enableAuto ? "Enable automatic sign-in" : "Sign in again"}
             </h2>
             <p className="mt-1 text-xs leading-5 text-white/45">
-              Token expired for <span className="text-white/70">{account.name}</span> ({account.username}).
-              Re-enter the password to refresh the session.
+              {enableAuto ? (
+                <>
+                  Confirm the password for{" "}
+                  <span className="text-white/70">{account.name}</span> ({account.username}).
+                  It is stored obfuscated on this machine and used to renew the session
+                  whenever it expires.
+                </>
+              ) : (
+                <>
+                  Token expired for <span className="text-white/70">{account.name}</span> (
+                  {account.username}). Re-enter the password to refresh the session.
+                </>
+              )}
             </p>
           </div>
           <button
@@ -481,10 +578,21 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
               autoFocus
               className="w-full rounded-xl border border-white/10 bg-white/[0.07] px-4 py-3 text-sm text-white/90 outline-none transition-all placeholder:text-white/25 focus:border-white/30 focus:bg-white/[0.10]"
             />
-            <p className="mt-2 text-[11px] leading-4 text-white/35">
-              Your password is only used once to sign in and is never stored.
-            </p>
           </div>
+
+          {!enableAuto && (
+            <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-white"
+              />
+              <span className="text-sm text-white/75">
+                Remember the password so this account signs itself in next time
+              </span>
+            </label>
+          )}
 
           {formError && <p role="alert" className="text-xs text-red-300">{formError}</p>}
 
@@ -502,7 +610,7 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
               className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-              {saving ? "Signing in..." : "Sign In"}
+              {saving ? "Signing in..." : enableAuto ? "Save & Sign In" : "Sign In"}
             </button>
           </div>
         </form>
@@ -512,45 +620,46 @@ function ReLoginModal({ open, account, onClose, onDone, onError }: ReLoginModalP
 }
 
 /**
- * Fetch an account's server-side dashboard stats (cumulative totals) plus its
- * recent usage (for the 7-day chart). Successful stats are recorded into the
- * offline snapshot; a 401 triggers a token refresh with one retry.
+ * Fetch an account's relay dashboard stats and recent usage.
+ *
+ * The session is renewed automatically (refresh token, then the stored
+ * password) before a request and retried once after a 401, so an account with a
+ * saved password signs itself back in without the user noticing.
  */
-async function fetchAccountData(
-  account: Account
-): Promise<{ stats: DashboardStats }> {
+async function fetchAccountData(account: Account): Promise<{
+  stats: DashboardStats;
+  account: Account;
+  renewed: boolean;
+  autoSignedIn: boolean;
+}> {
   const { startDate, endDate } = getDateRange();
-  let context = getAccountRequestContext(account);
 
-  let stats: DashboardStats;
-  try {
-    stats = await fetchAccountDashboardStats(context);
-  } catch (error: unknown) {
-    if (error instanceof ApiError && error.status === 401) {
-      const refreshed = await refreshAccountToken(account);
-      if (refreshed) {
-        context = getAccountRequestContext(refreshed);
-        stats = await fetchAccountDashboardStats(context);
-      } else {
-        throw error;
-      }
-    } else {
-      throw error;
-    }
-  }
-
-  recordDashboardStats(account.id, stats);
+  const stats = await requestWithAccountSession(account, (context) =>
+    fetchAccountDashboardStats(context)
+  );
+  syncAccountStats(account.id, stats.value);
 
   // Recent usage feeds the 7-day chart only; a failure here must not hide
   // the cumulative totals, so it is best-effort.
   try {
-    const records = await fetchAccountRecentUsage(startDate, endDate, context);
-    recordUsageForAccount(account.id, records);
+    const records = await requestWithAccountSession(stats.account, (context) =>
+      fetchAccountRecentUsage(startDate, endDate, context)
+    );
+    recordUsageForAccount(account.id, records.value);
   } catch {
-    // The cumulative snapshot is already saved; keep chart data as-is.
+    // The local totals are already saved; keep chart data as-is.
   }
 
-  return { stats };
+  const previousAutoLogin = account.lastAutoLoginAt ?? "";
+  const autoSignedIn =
+    !!stats.account.lastAutoLoginAt && stats.account.lastAutoLoginAt !== previousAutoLogin;
+
+  return {
+    stats: stats.value,
+    account: stats.account,
+    renewed: stats.renewed,
+    autoSignedIn,
+  };
 }
 
 export default function TotalUsage() {
@@ -559,75 +668,104 @@ export default function TotalUsage() {
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [pageError, setPageError] = useState("");
+  const [statusNote, setStatusNote] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [reloginAccount, setReloginAccount] = useState<Account | null>(null);
+  const [reloginMode, setReloginMode] = useState<"relogin" | "enable-auto">("relogin");
   const [reloginOpen, setReloginOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const syncingRef = useRef(false);
 
   const refreshAccounts = useCallback(() => {
     setAccounts(loadAccounts());
   }, []);
 
-  const loadUsage = useCallback(async () => {
-    const enabled = getEnabledAccounts();
-    setLoading(true);
-    setPageError("");
+  const loadUsage = useCallback(async (options: { background?: boolean } = {}) => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    try {
+      const enabled = getEnabledAccounts();
+      if (!options.background) {
+        setLoading(true);
+      }
+      setPageError("");
 
-    if (enabled.length === 0) {
-      setRows([]);
-      setLoading(false);
-      setLastUpdate(new Date());
-      return;
-    }
-
-    const results = await Promise.allSettled(
-      enabled.map((account) => fetchAccountData(account))
-    );
-
-    const nextRows = results.map((result, index) => {
-      const account = enabled[index];
-      const snapshot = getAccountSnapshot(account.id);
-      const fallback = snapshotCumulative(snapshot);
-
-      if (result.status === "fulfilled") {
-        const stats = result.value.stats;
-        return {
-          account,
-          status: "success" as const,
-          totalTokens: toFiniteNumber(stats.total_tokens) ?? fallback.totalTokens,
-          totalRequests: toFiniteNumber(stats.total_requests) ?? fallback.totalRequests,
-          totalCost: toFiniteNumber(stats.total_actual_cost) ?? fallback.totalCost,
-          todayTokens: toFiniteNumber(stats.today_tokens) ?? fallback.todayTokens,
-        };
+      if (enabled.length === 0) {
+        setRows([]);
+        setLastUpdate(new Date());
+        return;
       }
 
-      const error =
-        result.reason instanceof Error
-          ? result.reason.message
-          : "Failed to load usage for this account.";
-      recordUsageError(account.id, error);
+      const results = await Promise.allSettled(
+        enabled.map((account) => fetchAccountData(account))
+      );
 
-      const hasSnapshot =
-        snapshot !== null &&
-        (Object.keys(snapshot.days).length > 0 ||
-          (toFiniteNumber(snapshot.cumulative?.totalTokens) ?? 0) > 0);
-      return {
-        account,
-        status: (hasSnapshot ? "offline" : "error") as "offline" | "error",
-        error,
-        totalTokens: fallback.totalTokens,
-        totalRequests: fallback.totalRequests,
-        totalCost: fallback.totalCost,
-        todayTokens: fallback.todayTokens,
-      };
-    });
+      const nextRows = results.map((result, index) => {
+        const account = enabled[index];
+        const snapshot = getAccountSnapshot(account.id);
+        const local = getLocalCumulative(snapshot);
+        const server = getServerCumulative(snapshot);
 
-    setRows(nextRows);
-    setLoading(false);
-    setLastUpdate(new Date());
-  }, []);
+        if (result.status === "fulfilled") {
+          const { stats, account: syncedAccount, autoSignedIn, renewed } = result.value;
+          const latest = getAccountSnapshot(account.id);
+          const latestLocal = getLocalCumulative(latest);
+          const latestServer = getServerCumulative(latest);
+          return {
+            account: syncedAccount,
+            status: "success" as const,
+            totalTokens: latestLocal.totalTokens,
+            totalRequests: latestLocal.totalRequests,
+            totalCost: latestLocal.totalCost,
+            serverTokens: toFiniteNumber(stats.total_tokens) ?? latestServer.totalTokens,
+            serverRequests:
+              toFiniteNumber(stats.total_requests) ?? latestServer.totalRequests,
+            serverCost:
+              toFiniteNumber(stats.total_actual_cost) ?? latestServer.totalCost,
+            lastResetAt: latest?.lastReset?.detectedAt,
+            autoSignedIn,
+            refreshed: renewed && !autoSignedIn,
+          };
+        }
+
+        const error =
+          result.reason instanceof Error
+            ? result.reason.message
+            : "Failed to load usage for this account.";
+        recordUsageError(account.id, error);
+
+        const hasData =
+          snapshot !== null &&
+          (local.totalTokens > 0 || Object.keys(snapshot.days).length > 0);
+        return {
+          account,
+          status: (hasData ? "offline" : "error") as "offline" | "error",
+          error,
+          totalTokens: local.totalTokens,
+          totalRequests: local.totalRequests,
+          totalCost: local.totalCost,
+          serverTokens: server.totalTokens,
+          serverRequests: server.totalRequests,
+          serverCost: server.totalCost,
+          lastResetAt: snapshot?.lastReset?.detectedAt,
+        };
+      });
+
+      setRows(nextRows);
+      refreshAccounts();
+      setLastUpdate(new Date());
+    } finally {
+      setLoading(false);
+      syncingRef.current = false;
+    }
+  }, [refreshAccounts]);
 
   useEffect(() => {
     void loadUsage();
+    const interval = window.setInterval(() => {
+      void loadUsage({ background: true });
+    }, SYNC_INTERVAL_MS);
+    return () => window.clearInterval(interval);
   }, [loadUsage]);
 
   const totals = useMemo(() => toSummary(rows), [rows]);
@@ -638,11 +776,15 @@ export default function TotalUsage() {
           .map((row) => getAccountSnapshot(row.account.id))
           .filter((snap): snap is AccountUsageSnapshot => snap !== null)
       ),
-    [rows, lastUpdate]
+    [rows]
   );
   const enabledCount = accounts.filter((account) => account.enabled).length;
   const failedCount = rows.filter((row) => row.status === "error").length;
   const offlineCount = rows.filter((row) => row.status === "offline").length;
+  const resetRows = rows.filter((row) => isRecentReset(row.lastResetAt));
+  const autoSignedInRows = rows.filter((row) => row.autoSignedIn);
+  const refreshedRows = rows.filter((row) => row.refreshed);
+  const storedPasswordCount = accounts.filter((account) => hasStoredPassword(account)).length;
 
   async function handleSwitch(account: Account) {
     try {
@@ -656,25 +798,124 @@ export default function TotalUsage() {
   function handleToggleEnabled(account: Account) {
     setAccountEnabled(account.id, !account.enabled);
     refreshAccounts();
-    void loadUsage();
+    void loadUsage({ background: true });
   }
 
   function handleDelete(account: Account) {
     if (
       !window.confirm(
-        `Delete account "${account.name}"?\nThe remote Sub2API account is not affected.`
+        `Delete account "${account.name}"?\nThe remote Sub2API account is not affected. Its locally stored usage history stays in place.`
       )
     ) {
       return;
     }
     deleteAccount(account.id);
     refreshAccounts();
-    void loadUsage();
+    void loadUsage({ background: true });
   }
 
-  function handleReLogin(account: Account) {
+  async function handleKey(account: Account) {
+    setPageError("");
+    setStatusNote("");
+    // A stored password means the account can sign itself back in right away.
+    if (account.autoRelogin && hasStoredPassword(account)) {
+      try {
+        await autoReloginAccount(account.id);
+        setStatusNote(`Signed in again automatically for ${account.name}.`);
+        refreshAccounts();
+        void loadUsage({ background: true });
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : "Unable to sign in again.";
+        setPageError(message);
+        setReloginAccount(account);
+        setReloginMode("relogin");
+        setReloginOpen(true);
+      }
+      return;
+    }
     setReloginAccount(account);
+    setReloginMode("relogin");
     setReloginOpen(true);
+  }
+
+  async function handleToggleAutoRelogin(account: Account) {
+    setPageError("");
+    setStatusNote("");
+    if (!account.autoRelogin || !hasStoredPassword(account)) {
+      setReloginAccount(account);
+      setReloginMode("enable-auto");
+      setReloginOpen(true);
+      return;
+    }
+    if (
+      !window.confirm(
+        `Forget the saved password for "${account.name}" and turn automatic sign-in off?`
+      )
+    ) {
+      return;
+    }
+    try {
+      setAccountAutoRelogin(account.id, false);
+      setStatusNote(`Automatic sign-in disabled for ${account.name}.`);
+      refreshAccounts();
+    } catch (err: unknown) {
+      setPageError(err instanceof Error ? err.message : "Unable to change the setting.");
+    }
+  }
+
+  function handleBackup() {
+    setPageError("");
+    try {
+      downloadBackup();
+      void copyBackupToClipboard()
+        .then(() => {
+          setStatusNote(
+            "Backup downloaded and copied to the clipboard (accounts + local usage history)."
+          );
+        })
+        .catch(() => {
+          setStatusNote(
+            "Backup downloaded. Clipboard copy is unavailable in this window."
+          );
+        });
+    } catch (err: unknown) {
+      setPageError(err instanceof Error ? err.message : "Unable to create a backup.");
+    }
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPageError("");
+    setStatusNote("");
+    try {
+      const text = await file.text();
+      const summary = importBackup(text);
+      refreshAccounts();
+      void loadUsage({ background: true });
+      const parts = [
+        `Restored ${summary.accountsAdded} new account(s)`,
+        `${summary.accountsUpdated} merged`,
+        `${summary.snapshotsMerged} usage snapshot(s) merged`,
+      ];
+      if (summary.passwordsRestored > 0) {
+        parts.push(`${summary.passwordsRestored} saved password(s) usable`);
+      }
+      if (summary.passwordsUnavailable > 0) {
+        parts.push(
+          `${summary.passwordsUnavailable} saved password(s) need to be entered again on this device`
+        );
+      }
+      setStatusNote(parts.join(" · ") + ".");
+    } catch (err: unknown) {
+      setPageError(
+        err instanceof BackupError || err instanceof Error
+          ? err.message
+          : "Unable to restore that backup."
+      );
+    }
   }
 
   return (
@@ -685,11 +926,37 @@ export default function TotalUsage() {
           {lastUpdate && (
             <p className="mt-0.5 text-[10px] text-white/30">
               Updated {lastUpdate.toLocaleTimeString()} · {accounts.length} account
-              {accounts.length === 1 ? "" : "s"} · {enabledCount} enabled
+              {accounts.length === 1 ? "" : "s"} · {enabledCount} enabled ·{" "}
+              {storedPasswordCount} with automatic sign-in
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleBackup}
+            title="Download a JSON backup of accounts and local usage history"
+            className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
+          >
+            <DatabaseBackup size={14} />
+            <span>Backup</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Restore accounts and usage history from a backup file"
+            className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/55 transition-all hover:bg-white/10 hover:text-white/85"
+          >
+            <Upload size={14} />
+            <span>Restore</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(event) => void handleImportFile(event)}
+          />
           <button
             type="button"
             onClick={() => setModalOpen(true)}
@@ -711,6 +978,11 @@ export default function TotalUsage() {
       </div>
 
       {pageError && <p role="alert" className="text-xs text-red-300">{pageError}</p>}
+      {statusNote && (
+        <p role="status" className="text-xs text-emerald-300/90">
+          {statusNote}
+        </p>
+      )}
       {failedCount > 0 && (
         <p role="status" className="text-xs text-amber-300">
           {failedCount} enabled account(s) have no saved data yet.
@@ -718,7 +990,29 @@ export default function TotalUsage() {
       )}
       {offlineCount > 0 && (
         <p role="status" className="text-xs text-sky-300">
-          {offlineCount} account(s) are offline — showing last saved usage.
+          {offlineCount} account(s) are offline — showing the locally saved totals.
+        </p>
+      )}
+      {autoSignedInRows.length > 0 && (
+        <p role="status" className="text-xs text-emerald-300/90">
+          Signed in again automatically:{" "}
+          {autoSignedInRows.map((row) => row.account.name).join(", ")}.
+        </p>
+      )}
+      {refreshedRows.length > 0 && (
+        <p role="status" className="text-[11px] text-white/35">
+          Session refreshed with the refresh token:{" "}
+          {refreshedRows.map((row) => row.account.name).join(", ")}.
+        </p>
+      )}
+      {resetRows.length > 0 && (
+        <p role="status" className="text-xs text-amber-300">
+          <History size={12} className="mr-1 inline" />
+          The relay cleared its usage data for{" "}
+          {resetRows
+            .map((row) => `${row.account.name} (${formatDateTime(row.lastResetAt ?? "")})`)
+            .join(", ")}
+          . Local history was kept and keeps growing from the new relay numbers.
         </p>
       )}
 
@@ -727,20 +1021,24 @@ export default function TotalUsage() {
           icon={<Zap size={20} />}
           label="ACCOUNTS TOTAL TOKENS"
           value={loading ? "---" : formatNumber(totals.totalTokens)}
-          sublabel="Sum of each account's total tokens (all-time)"
+          sublabel={`Local accumulated history · relay reports ${formatNumber(
+            totals.serverTokens
+          )} tokens`}
           highlight
         />
         <StatCard
           icon={<Activity size={18} />}
           label="Total Requests"
           value={loading ? "---" : formatNumber(totals.totalRequests)}
-          sublabel="All enabled accounts · all-time"
+          sublabel={`Local accumulated · relay reports ${formatNumber(
+            totals.serverRequests
+          )}`}
         />
         <StatCard
           icon={<DollarSign size={18} />}
           label="Total Cost"
           value={loading ? "$---" : formatCost(totals.totalCost)}
-          sublabel="All enabled accounts · all-time"
+          sublabel={`Local accumulated · relay reports ${formatCost(totals.serverCost)}`}
         />
         <StatCard
           icon={<ChartPie size={18} />}
@@ -775,6 +1073,8 @@ export default function TotalUsage() {
             {accounts.map((account) => {
               const row = rows.find((item) => item.account.id === account.id);
               const isEnabled = account.enabled;
+              const savedPassword = hasStoredPassword(account);
+              const unreadablePassword = hasUnreadablePassword(account);
               return (
                 <div
                   key={account.id}
@@ -786,7 +1086,7 @@ export default function TotalUsage() {
                     <UserRound size={16} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-sm font-medium text-white/80">
                         {account.name}
                       </p>
@@ -820,6 +1120,53 @@ export default function TotalUsage() {
                               ? "Enabled"
                               : "Disabled"}
                       </span>
+                      {savedPassword && (
+                        <span
+                          title={
+                            account.autoRelogin
+                              ? `Automatic sign-in is on (password stored on this device${
+                                  account.lastAutoLoginAt
+                                    ? `, last used ${formatDateTime(account.lastAutoLoginAt)}`
+                                    : ""
+                                })`
+                              : "Password stored but automatic sign-in is off"
+                          }
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
+                            account.autoRelogin
+                              ? "bg-emerald-500/10 text-emerald-300/80"
+                              : "bg-white/10 text-white/40"
+                          }`}
+                        >
+                          <ShieldCheck size={10} />
+                          {account.autoRelogin ? "Auto sign-in" : "Password saved"}
+                        </span>
+                      )}
+                      {unreadablePassword && (
+                        <span
+                          title="A password is stored for this account, but it was saved with another installation key (for example after clearing the app data). Enter it again to re-enable automatic sign-in."
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300/90"
+                        >
+                          <CircleAlert size={10} />
+                          Password unavailable on this device
+                        </span>
+                      )}
+                      {row?.autoSignedIn && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
+                          <KeyRound size={10} />
+                          Signed in automatically
+                        </span>
+                      )}
+                      {isRecentReset(row?.lastResetAt) && (
+                        <span
+                          title={`The relay reported lower totals on ${formatDateTime(
+                            row?.lastResetAt ?? ""
+                          )}. Local history was kept.`}
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300"
+                        >
+                          <History size={10} />
+                          Relay data cleared · local history kept
+                        </span>
+                      )}
                     </div>
                     <p className="mt-0.5 truncate text-[11px] text-white/35">
                       {account.username} · {account.baseUrl}
@@ -833,7 +1180,7 @@ export default function TotalUsage() {
                           <CircleAlert size={12} />
                           No saved data
                         </p>
-                        <p className="mt-0.5 max-w-[200px] truncate text-[10px] text-white/30">
+                        <p className="mt-0.5 max-w-[220px] truncate text-[10px] text-white/30">
                           {row.error}
                         </p>
                       </div>
@@ -843,7 +1190,13 @@ export default function TotalUsage() {
                           {formatNumber(row.totalTokens)} tokens
                         </p>
                         <p className="text-[11px] tabular-nums text-white/35">
-                          {formatNumber(row.totalRequests)} requests · {formatCost(row.totalCost)}
+                          {formatNumber(row.totalRequests)} requests ·{" "}
+                          {formatCost(row.totalCost)}
+                        </p>
+                        <p className="text-[10px] tabular-nums text-white/25">
+                          relay reports {formatNumber(row.serverTokens)} tokens ·{" "}
+                          {formatNumber(row.serverRequests)} requests ·{" "}
+                          {formatCost(row.serverCost)}
                         </p>
                       </div>
                     )
@@ -864,11 +1217,29 @@ export default function TotalUsage() {
                     </button>
                     <button
                       type="button"
-                      title="Sign in again (refresh expired token)"
-                      onClick={() => handleReLogin(account)}
+                      title={
+                        savedPassword
+                          ? "Sign in again with the saved password (or turn it off)"
+                          : "Sign in again (refresh an expired token)"
+                      }
+                      onClick={() => void handleKey(account)}
                       className="flex h-8 w-8 items-center justify-center rounded-xl text-white/40 transition-all hover:bg-white/10 hover:text-emerald-300"
                     >
                       <KeyRound size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      title={
+                        account.autoRelogin
+                          ? "Automatic sign-in is on — click to forget the password"
+                          : "Remember this password so the account can sign itself back in"
+                      }
+                      onClick={() => void handleToggleAutoRelogin(account)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all hover:bg-white/10 ${
+                        account.autoRelogin ? "text-emerald-300/80" : "text-white/40"
+                      }`}
+                    >
+                      <ShieldCheck size={14} />
                     </button>
                     <button
                       type="button"
@@ -896,22 +1267,31 @@ export default function TotalUsage() {
         )}
       </div>
 
+      <p className="text-[11px] leading-5 text-white/30">
+        Totals are accumulated on this machine from every relay reading, so clearing or
+        resetting usage data on the relay no longer erases them. Passwords saved for
+        automatic sign-in stay in this app&apos;s local storage. Use{" "}
+        <span className="text-white/45">Backup</span> to keep a JSON copy of accounts and
+        history outside the app.
+      </p>
+
       <AddAccountModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onAdded={() => {
           refreshAccounts();
-          void loadUsage();
+          void loadUsage({ background: true });
         }}
         onError={setPageError}
       />
       <ReLoginModal
         open={reloginOpen}
         account={reloginAccount}
+        mode={reloginMode}
         onClose={() => setReloginOpen(false)}
         onDone={() => {
           refreshAccounts();
-          void loadUsage();
+          void loadUsage({ background: true });
         }}
         onError={setPageError}
       />

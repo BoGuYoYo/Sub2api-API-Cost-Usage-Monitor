@@ -1,8 +1,27 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Activity, BarChart3, ChevronDown, Clock, DollarSign, Monitor, RefreshCw, Zap } from "lucide-react";
-import { loadAccounts, getActiveAccount, activateAccount, getActiveAccountId } from "../lib/accounts";
-import { fetchDashboardStats, fetchRecentUsage, type DashboardStats, type UsageRecord } from "../lib/api";
+import { Activity, BarChart3, ChevronDown, Clock, DollarSign, History, Monitor, RefreshCw, Zap } from "lucide-react";
+import {
+  activateAccount,
+  getActiveAccount,
+  getActiveAccountId,
+  loadAccounts,
+  requestWithAccountSession,
+} from "../lib/accounts";
+import {
+  fetchAccountDashboardStats,
+  fetchAccountRecentUsage,
+  type DashboardStats,
+  type UsageRecord,
+} from "../lib/api";
+import {
+  getAccountSnapshot,
+  getLocalCumulative,
+  getServerCumulative,
+  recordUsageForAccount,
+  syncAccountStats,
+  type AccountUsageSnapshot,
+} from "../lib/usage-snapshots";
 import { openFloatingWidget } from "../lib/windows";
 
 function toFiniteNumber(value: unknown): number | null {
@@ -55,6 +74,40 @@ function getRecordTokens(record: UsageRecord): number {
     (toFiniteNumber(record.input_tokens) ?? 0) +
     (toFiniteNumber(record.output_tokens) ?? 0)
   );
+}
+
+interface LocalTotals {
+  totalTokens: number;
+  totalRequests: number;
+  totalCost: number;
+}
+
+function readLocalTotals(accountId: string | null): LocalTotals {
+  const snapshot: AccountUsageSnapshot | null = accountId
+    ? getAccountSnapshot(accountId)
+    : null;
+  const local = getLocalCumulative(snapshot);
+  return {
+    totalTokens: local.totalTokens,
+    totalRequests: local.totalRequests,
+    totalCost: local.totalCost,
+  };
+}
+
+interface ResetNotice {
+  detectedAt: string;
+  reportedTokens: number;
+}
+
+function readResetNotice(accountId: string | null): ResetNotice | null {
+  if (!accountId) return null;
+  const snapshot = getAccountSnapshot(accountId);
+  const detectedAt = snapshot?.lastReset?.detectedAt;
+  if (!detectedAt) return null;
+  const time = Date.parse(detectedAt);
+  if (Number.isNaN(time) || Date.now() - time > 7 * 24 * 60 * 60 * 1000) return null;
+  const server = getServerCumulative(snapshot);
+  return { detectedAt, reportedTokens: server.totalTokens };
 }
 
 interface StatCardProps {
@@ -212,6 +265,13 @@ export default function Dashboard() {
   const [recentLoading, setRecentLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [widgetError, setWidgetError] = useState("");
+  const [fetchError, setFetchError] = useState("");
+  const [localTotals, setLocalTotals] = useState<LocalTotals>(() =>
+    readLocalTotals(getActiveAccountId())
+  );
+  const [resetNotice, setResetNotice] = useState<ResetNotice | null>(() =>
+    readResetNotice(getActiveAccountId())
+  );
   const [activeAccountName, setActiveAccountName] = useState<string>(() => {
     const account = getActiveAccount();
     return account ? account.name : "No account selected";
@@ -237,50 +297,53 @@ export default function Dashboard() {
     );
     const active = getActiveAccount();
     setActiveAccountName(active ? active.name : "No account selected");
+    setLocalTotals(readLocalTotals(active ? active.id : null));
+    setResetNotice(readResetNotice(active ? active.id : null));
   }, []);
 
 
-  if (!hasAccounts) {
-    return (
-      <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center">
-        <Activity size={40} className="text-white/25" />
-        <h1 className="mt-4 text-xl font-light tracking-wide text-white/90">Welcome</h1>
-        <p className="mt-2 max-w-sm text-sm text-white/50">
-          Add a Sub2API relay account to start monitoring token usage.
-        </p>
-        <button
-          type="button"
-          onClick={() => navigate("/total-usage")}
-          className="mt-6 rounded-xl bg-white/10 px-5 py-2.5 text-sm font-medium text-white/85 transition-all hover:bg-white/15"
-        >
-          Go to Total Usage
-        </button>
-      </div>
-    );
-  }
-
   const fetchData = useCallback(async () => {
+    const account = getActiveAccount();
+    if (!account) return;
     const endDate = new Date();
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 6);
     setRecentLoading(true);
 
     try {
+      // Both requests run through the account's own session, renewing it with
+      // the refresh token or the saved password before giving up.
       const [statsResult, recentResult] = await Promise.allSettled([
-        fetchDashboardStats(),
-        fetchRecentUsage(formatDate(startDate), formatDate(endDate)),
+        requestWithAccountSession(account, (context) =>
+          fetchAccountDashboardStats(context)
+        ),
+        requestWithAccountSession(account, (context) =>
+          fetchAccountRecentUsage(formatDate(startDate), formatDate(endDate), context)
+        ),
       ]);
 
       let updated = false;
       if (statsResult.status === "fulfilled") {
-        setStats(statsResult.value);
+        syncAccountStats(account.id, statsResult.value.value);
+        setStats(statsResult.value.value);
+        setFetchError("");
         updated = true;
+      } else {
+        setFetchError(
+          statsResult.reason instanceof Error
+            ? statsResult.reason.message
+            : "Unable to load usage from the relay."
+        );
       }
       if (recentResult.status === "fulfilled") {
-        setRecentUsage(recentResult.value);
+        recordUsageForAccount(account.id, recentResult.value.value);
+        setRecentUsage(recentResult.value.value);
         updated = true;
       }
       if (updated) setLastUpdate(new Date());
+
+      setLocalTotals(readLocalTotals(account.id));
+      setResetNotice(readResetNotice(account.id));
     } finally {
       setRecentLoading(false);
     }
@@ -293,6 +356,9 @@ export default function Dashboard() {
       refreshAccounts();
       setStats(null);
       setRecentUsage(null);
+      setLocalTotals(readLocalTotals(id));
+      setResetNotice(readResetNotice(id));
+      setFetchError("");
       void fetchData();
     } catch {
       // The accounts page reports switch errors; keep Dashboard stable.
@@ -311,6 +377,27 @@ export default function Dashboard() {
       window.removeEventListener("accounts-changed", handleAccountsChanged);
     };
   }, [fetchData, refreshAccounts]);
+
+  // The empty state is rendered after every hook has run, so adding the first
+  // account from another page can never change the hook order.
+  if (!hasAccounts) {
+    return (
+      <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center">
+        <Activity size={40} className="text-white/25" />
+        <h1 className="mt-4 text-xl font-light tracking-wide text-white/90">Welcome</h1>
+        <p className="mt-2 max-w-sm text-sm text-white/50">
+          Add a Sub2API relay account to start monitoring token usage.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate("/total-usage")}
+          className="mt-6 rounded-xl bg-white/10 px-5 py-2.5 text-sm font-medium text-white/85 transition-all hover:bg-white/15"
+        >
+          Go to Total Usage
+        </button>
+      </div>
+    );
+  }
 
   async function handleOpenWidget() {
     setWidgetError("");
@@ -365,6 +452,22 @@ export default function Dashboard() {
       {widgetError && (
         <p role="alert" className="text-xs text-red-300">{widgetError}</p>
       )}
+      {fetchError && (
+        <p role="alert" className="text-xs text-red-300">{fetchError}</p>
+      )}
+      {resetNotice && (
+        <p role="status" className="text-xs text-amber-300">
+          <History size={12} className="mr-1 inline" />
+          The relay cleared its usage data on{" "}
+          {new Date(resetNotice.detectedAt).toLocaleString(undefined, {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+          . Local totals were kept and continue from there.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <StatCard
@@ -380,7 +483,20 @@ export default function Dashboard() {
         <StatCard
           icon={<BarChart3 size={18} />}
           label="Total Tokens"
-          value={stats ? formatNumber(stats.total_tokens) : "---"}
+          value={
+            localTotals.totalTokens > 0
+              ? formatNumber(localTotals.totalTokens)
+              : stats
+                ? formatNumber(stats.total_tokens)
+                : "---"
+          }
+          sublabel={
+            localTotals.totalTokens > 0
+              ? `Local history · relay reports ${formatNumber(
+                  stats ? stats.total_tokens : 0
+                )}`
+              : undefined
+          }
         />
         <StatCard
           icon={<Activity size={18} />}

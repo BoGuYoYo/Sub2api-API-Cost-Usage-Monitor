@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Pin, PinOff, Zap, DollarSign } from "lucide-react";
 import TitleBar from "../components/TitleBar";
-import { fetchDashboardStats, type DashboardStats } from "../lib/api";
+import { getActiveAccount, requestWithAccountSession } from "../lib/accounts";
+import { fetchAccountDashboardStats, type DashboardStats } from "../lib/api";
+import { syncAccountStats } from "../lib/usage-snapshots";
 
 function toFiniteNumber(value: unknown): number | null {
   const number = typeof value === "number" ? value : Number(value);
@@ -32,9 +34,16 @@ export default function FloatingWidget() {
     let disposed = false;
 
     async function loadStats() {
+      const account = getActiveAccount();
+      if (!account) return;
       try {
-        const nextStats = await fetchDashboardStats();
-        if (!disposed) setStats(nextStats);
+        // The widget renews the session too, so a long-running widget keeps
+        // feeding the local history after a token expiry.
+        const result = await requestWithAccountSession(account, (context) =>
+          fetchAccountDashboardStats(context)
+        );
+        syncAccountStats(account.id, result.value);
+        if (!disposed) setStats(result.value);
       } catch {
         // The main window handles expired sessions; keep the widget stable.
       }
