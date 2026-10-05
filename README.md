@@ -62,8 +62,10 @@ The **Backup** button on the Total Usage page downloads a JSON file with the acc
 same JSON is copied to the clipboard. **Restore** reads such a file back:
 
 - accounts are merged by id, keeping the newer record and never dropping a saved password;
-- usage history is merged with a per-field maximum, so restoring an older file can never
-  shrink the totals you already have.
+- local totals are merged with a per-field maximum, so restoring an older file can never
+  shrink the totals you already have;
+- the relay baseline follows the *newest* reading rather than the largest one, so restoring
+  a file from before a relay reset does not swallow the usage that came after it.
 
 Restoring on a fresh installation also adopts the encryption key stored in the backup, so
 saved passwords keep working there. On a machine that already has its own accounts, the

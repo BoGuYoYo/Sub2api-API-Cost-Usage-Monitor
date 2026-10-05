@@ -531,9 +531,14 @@ export function saveAllSnapshots(
 /**
  * Combine two snapshots of the same account without losing data.
  *
- * Totals keep the larger value per field, and the relay baseline does too: a
- * higher baseline means those deltas were already counted locally, so the next
- * sync only adds genuinely new usage.
+ * Local totals keep the larger value per field: an account's history must never
+ * shrink, whichever copy is restored.
+ *
+ * The relay baseline instead follows the *newest* observation, because it is the
+ * number the next sync diffs against. Keeping a historical peak here would
+ * swallow every new relay reading until the relay climbed back above that peak -
+ * exactly what happens when a relay resets and a pre-reset backup is restored.
+ * When both copies were taken at the same moment the larger value wins.
  */
 export function mergeAccountSnapshot(
   current: AccountUsageSnapshot | undefined,
@@ -548,6 +553,13 @@ export function mergeAccountSnapshot(
   const currentServer = normalizeCumulative(current.cumulative);
   const incomingServer = normalizeCumulative(incoming.cumulative);
 
+  const currentSync = current.lastSyncAt ?? "";
+  const incomingSync = incoming.lastSyncAt ?? "";
+  const sameMoment = currentSync === incomingSync;
+  const incomingIsNewer = incomingSync > currentSync;
+  const pickBaseline = (a: number, b: number) =>
+    sameMoment ? Math.max(a, b) : incomingIsNewer ? b : a;
+
   const days: Record<string, DailyUsage> = { ...normalizeDays(current.days) };
   for (const [key, day] of Object.entries(normalizeDays(incoming.days))) {
     days[key] = mergeDailyUsage(days[key], day);
@@ -560,10 +572,7 @@ export function mergeAccountSnapshot(
       ? incomingReset
       : currentReset;
 
-  const newerLastSync =
-    (incoming.lastSyncAt ?? "") > (current.lastSyncAt ?? "")
-      ? incoming.lastSyncAt
-      : current.lastSyncAt;
+  const newerLastSync = incomingIsNewer ? incoming.lastSyncAt : current.lastSyncAt;
 
   return {
     accountId: current.accountId || incoming.accountId,
@@ -578,12 +587,12 @@ export function mergeAccountSnapshot(
       todayCost: pickHigher(currentLocal.todayCost, incomingLocal.todayCost),
     },
     cumulative: {
-      totalTokens: pickHigher(currentServer.totalTokens, incomingServer.totalTokens),
-      totalRequests: pickHigher(currentServer.totalRequests, incomingServer.totalRequests),
-      totalCost: pickHigher(currentServer.totalCost, incomingServer.totalCost),
-      todayTokens: pickHigher(currentServer.todayTokens, incomingServer.todayTokens),
-      todayRequests: pickHigher(currentServer.todayRequests, incomingServer.todayRequests),
-      todayCost: pickHigher(currentServer.todayCost, incomingServer.todayCost),
+      totalTokens: pickBaseline(currentServer.totalTokens, incomingServer.totalTokens),
+      totalRequests: pickBaseline(currentServer.totalRequests, incomingServer.totalRequests),
+      totalCost: pickBaseline(currentServer.totalCost, incomingServer.totalCost),
+      todayTokens: pickBaseline(currentServer.todayTokens, incomingServer.todayTokens),
+      todayRequests: pickBaseline(currentServer.todayRequests, incomingServer.todayRequests),
+      todayCost: pickBaseline(currentServer.todayCost, incomingServer.todayCost),
     },
     seeded: Boolean(current.seeded || incoming.seeded),
     lastReset,

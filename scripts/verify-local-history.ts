@@ -33,8 +33,13 @@ const storage = new MemoryStorage();
 const { register } = await import("node:module");
 register(new URL("./ts-path-resolver.mjs", import.meta.url));
 
-const { syncAccountStats, recordUsageForAccount, getAccountSnapshot, mergeAccountSnapshot } =
-  await import("../src/lib/usage-snapshots.ts");
+const {
+  syncAccountStats,
+  recordUsageForAccount,
+  getAccountSnapshot,
+  mergeAccountSnapshot,
+  saveAllSnapshots,
+} = await import("../src/lib/usage-snapshots.ts");
 const { obfuscateSecret, revealSecret, hasRecoverableSecret } = await import(
   "../src/lib/secret-store.ts"
 );
@@ -137,8 +142,19 @@ const merged = mergeAccountSnapshot(
   }
 );
 check("merged local keeps the larger total", merged?.local.totalTokens, 1700);
-check("merged baseline keeps the larger reading", merged?.cumulative.totalTokens, 900);
 check("merged reset count", merged?.resetCount, 2);
+
+console.log("restoring a pre-reset backup still counts usage that comes after it");
+// The relay reset from 900 down to 300. A backup taken before the reset still
+// holds the higher number, so the baseline must follow the newest reading or
+// every new relay reading would fall below it and never be counted again.
+check("baseline follows the newest reading", merged?.cumulative.totalTokens, 300);
+if (merged) {
+  saveAllSnapshots({ [ACCOUNT]: merged });
+}
+const afterRestore = syncAccountStats(ACCOUNT, stats(400, 4, 0.4));
+check("usage after the restore is counted", afterRestore.deltaTokens, 100);
+check("local total keeps growing", getAccountSnapshot(ACCOUNT)?.local.totalTokens, 1800);
 
 console.log("older snapshots (v2) migrate into the local model");
 storage.clear();
