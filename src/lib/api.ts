@@ -525,22 +525,87 @@ interface UsageResponse {
   items?: UsageRecord[];
 }
 
+export interface UsageQueryResult {
+  records: UsageRecord[];
+  /** True when the safety page cap was reached before a short page. */
+  truncated: boolean;
+}
+
+export interface DashboardModelUsage {
+  model?: string;
+  model_name?: string;
+  requests?: number | string | null;
+  request_count?: number | string | null;
+  total_requests?: number | string | null;
+  total_tokens?: number | string | null;
+  tokens?: number | string | null;
+  input_tokens?: number | string | null;
+  output_tokens?: number | string | null;
+  actual_cost?: number | string | null;
+  total_actual_cost?: number | string | null;
+  total_cost?: number | string | null;
+  cost?: number | string | null;
+}
+
+export interface DashboardModelUsageResult {
+  models?: DashboardModelUsage[];
+  items?: DashboardModelUsage[];
+}
+
+export const USAGE_PAGE_SIZE = 100;
+const MAX_USAGE_PAGES = 1000;
+
+function readUsageItems(data: UsageResponse | UsageRecord[]): UsageRecord[] {
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+async function fetchUsagePages(
+  loadPage: (page: number) => Promise<UsageResponse | UsageRecord[]>
+): Promise<UsageQueryResult> {
+  const records: UsageRecord[] = [];
+  let reachedEnd = false;
+
+  for (let page = 1; page <= MAX_USAGE_PAGES; page += 1) {
+    const items = readUsageItems(await loadPage(page));
+    records.push(...items);
+
+    // A short page is the server's reliable end-of-results signal even when
+    // the response does not expose a total count.
+    if (items.length < USAGE_PAGE_SIZE) {
+      reachedEnd = true;
+      break;
+    }
+  }
+
+  return { records, truncated: !reachedEnd };
+}
+
+/** Build the shared /usage query string. Omit both dates to request all time. */
+export function buildUsageParams(
+  startDate: string | undefined,
+  endDate: string | undefined,
+  page: number
+): URLSearchParams {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(USAGE_PAGE_SIZE),
+  });
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  return params;
+}
+
 export async function fetchRecentUsage(
   startDate: string,
   endDate: string
 ): Promise<UsageRecord[]> {
-  const params = new URLSearchParams({
-    start_date: startDate,
-    end_date: endDate,
-    page: "1",
-    page_size: "100",
-  });
-  const data = await request<UsageResponse | UsageRecord[]>(
-    `/usage?${params.toString()}`
+  const result = await fetchUsagePages((page) =>
+    request<UsageResponse | UsageRecord[]>(
+      `/usage?${buildUsageParams(startDate, endDate, page).toString()}`
+    )
   );
-
-  if (Array.isArray(data)) return data;
-  return Array.isArray(data.items) ? data.items : [];
+  return result.records;
 }
 
 export async function refreshAccountSession(
@@ -593,20 +658,46 @@ export async function fetchAccountRecentUsage(
   endDate: string,
   context: AccountRequestContext
 ): Promise<UsageRecord[]> {
-  const params = new URLSearchParams({
-    start_date: startDate,
-    end_date: endDate,
-    page: "1",
-    page_size: "100",
-  });
-  const data = await requestForAccount<UsageResponse | UsageRecord[]>(
-    `/usage?${params.toString()}`,
+  const result = await fetchAccountUsageRecords(startDate, endDate, context);
+  return result.records;
+}
+
+/** Read every matching usage page for one account, including completeness state. */
+export async function fetchAccountUsageRecords(
+  startDate: string | undefined,
+  endDate: string | undefined,
+  context: AccountRequestContext
+): Promise<UsageQueryResult> {
+  return fetchUsagePages((page) =>
+    requestForAccount<UsageResponse | UsageRecord[]>(
+      `/usage?${buildUsageParams(startDate, endDate, page).toString()}`,
+      {},
+      context
+    )
+  );
+}
+
+/** Prefer the relay's pre-aggregated model dashboard response. */
+export async function fetchAccountDashboardModelUsage(
+  startDate: string | undefined,
+  endDate: string | undefined,
+  context: AccountRequestContext
+): Promise<DashboardModelUsage[] | null> {
+  const params = new URLSearchParams();
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (timezone) params.set("timezone", timezone);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const data = await requestForAccount<DashboardModelUsageResult | DashboardModelUsage[]>(
+    `/usage/dashboard/models${query}`,
     {},
     context
   );
-
   if (Array.isArray(data)) return data;
-  return Array.isArray(data.items) ? data.items : [];
+  if (Array.isArray(data.models)) return data.models;
+  if (Array.isArray(data.items)) return data.items;
+  return null;
 }
 
 export async function checkAccountConnection(

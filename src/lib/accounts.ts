@@ -472,16 +472,31 @@ export async function refreshAccountToken(
   account: Account
 ): Promise<Account | null> {
   if (!account.refreshToken) return null;
+
+  const inFlight = accountRefreshInFlight.get(account.id);
+  if (inFlight) return inFlight;
+
+  const attempt = (async (): Promise<Account | null> => {
+    try {
+      const data = await refreshAccountSession(
+        account.refreshToken,
+        account.accessToken,
+        account.baseUrl
+      );
+      if (!data.access_token) return null;
+      return updateAccountSession(account.id, data);
+    } catch {
+      return null;
+    }
+  })();
+
+  accountRefreshInFlight.set(account.id, attempt);
   try {
-    const data = await refreshAccountSession(
-      account.refreshToken,
-      account.accessToken,
-      account.baseUrl
-    );
-    if (!data.access_token) return null;
-    return updateAccountSession(account.id, data);
-  } catch {
-    return null;
+    return await attempt;
+  } finally {
+    if (accountRefreshInFlight.get(account.id) === attempt) {
+      accountRefreshInFlight.delete(account.id);
+    }
   }
 }
 
@@ -529,6 +544,7 @@ const AUTO_LOGIN_FAILURE_COOLDOWN_MS = 300_000;
 
 const autoLoginCooldownUntil = new Map<string, number>();
 const autoLoginInFlight = new Map<string, Promise<Account>>();
+const accountRefreshInFlight = new Map<string, Promise<Account | null>>();
 
 /**
  * Sign in with the password kept on this machine. Returns null when there is no

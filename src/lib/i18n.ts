@@ -19,6 +19,7 @@ const MESSAGES = {
   "nav.menu": { en: "Menu", zh: "菜单" },
   "nav.dashboard": { en: "Dashboard", zh: "概览" },
   "nav.totalUsage": { en: "Total Usage", zh: "总用量" },
+  "nav.modelRanking": { en: "Model Usage Ranking", zh: "模型使用排行" },
   "nav.language": { en: "Language", zh: "语言" },
   "nav.languageHint": { en: "Switch language", zh: "切换语言" },
 
@@ -88,6 +89,78 @@ const MESSAGES = {
   },
   "dashboard.unknownModel": { en: "Unknown model", zh: "未知模型" },
   "dashboard.unknownTime": { en: "Unknown time", zh: "时间未知" },
+
+  // -------------------------------------------------------- model ranking
+  "ranking.title": { en: "Model Usage Ranking", zh: "模型使用排行" },
+  "ranking.subtitle": {
+    en: "Token usage across all enabled accounts, grouped by model.",
+    zh: "汇总所有已启用账户的模型用量，并按 Token 数排名。",
+  },
+  "ranking.range": { en: "Time range", zh: "时间范围" },
+  "ranking.range.today": { en: "Today", zh: "今日" },
+  "ranking.range.7d": { en: "Last 7 days", zh: "最近 7 天" },
+  "ranking.range.30d": { en: "Last 30 days", zh: "最近 30 天" },
+  "ranking.range.all": { en: "All time", zh: "全部历史" },
+  "ranking.refresh": { en: "Refresh model ranking", zh: "刷新模型使用排行" },
+  "ranking.stale": {
+    en: "Showing the last successful data while the latest update is unavailable.",
+    zh: "当前无法获取最新数据，正在显示上一次成功加载的数据。",
+  },
+  "ranking.loading": {
+    en: "Loading model usage ranking",
+    zh: "正在加载模型使用排行",
+  },
+  "ranking.loadFailed": {
+    en: "Unable to load model usage.",
+    zh: "无法加载模型用量。",
+  },
+  "ranking.noAccounts": { en: "No enabled accounts", zh: "没有已启用的账户" },
+  "ranking.noAccountsHint": {
+    en: "Add or enable an account on Total Usage to build a model ranking.",
+    zh: "请先在“总用量”页面添加或启用账户，才能生成模型排行。",
+  },
+  "ranking.goToAccounts": { en: "Go to Total Usage", zh: "前往总用量" },
+  "ranking.totalTokens": { en: "Total Tokens", zh: "Token 总量" },
+  "ranking.totalRequests": { en: "Total Requests", zh: "总请求数" },
+  "ranking.totalCost": { en: "Total Cost", zh: "总费用" },
+  "ranking.modelCount": { en: "Models", zh: "模型数" },
+  "ranking.tableTitle": { en: "Model ranking", zh: "模型排行" },
+  "ranking.loadedAccounts": {
+    en: "{loaded} of {total} account(s) loaded",
+    zh: "已加载 {loaded} / {total} 个账户",
+  },
+  "ranking.sortedByTokens": { en: "Sorted by tokens", zh: "按 Token 数排序" },
+  "ranking.rank": { en: "Rank", zh: "排名" },
+  "ranking.model": { en: "Model", zh: "模型" },
+  "ranking.tokens": { en: "Tokens", zh: "Token" },
+  "ranking.requests": { en: "Requests", zh: "请求数" },
+  "ranking.cost": { en: "Cost", zh: "费用" },
+  "ranking.share": { en: "Share", zh: "占比" },
+  "ranking.unknownModel": { en: "Unknown model", zh: "未知模型" },
+  "ranking.partialFailure": {
+    en: "{count} account(s) could not be loaded. Showing data from the remaining accounts.",
+    zh: "有 {count} 个账户加载失败，当前仅显示其余账户的数据。",
+  },
+  "ranking.allFailed": {
+    en: "No account data could be loaded.",
+    zh: "所有账户数据均加载失败。",
+  },
+  "ranking.accountError": {
+    en: "{name}: {error}",
+    zh: "{name}：{error}",
+  },
+  "ranking.truncated": {
+    en: "The result reached the page limit for: {names}. Their rankings may be incomplete.",
+    zh: "以下账户已达到分页上限：{names}，排行数据可能不完整。",
+  },
+  "ranking.empty": {
+    en: "No model usage in this time range.",
+    zh: "当前时间范围没有模型用量。",
+  },
+  "ranking.emptyHint": {
+    en: "Try a wider time range or make an API request first.",
+    zh: "可尝试扩大时间范围，或先发起一次 API 请求。",
+  },
 
   // ------------------------------------------------------------ total usage
   "usage.title": { en: "Total Usage", zh: "总用量" },

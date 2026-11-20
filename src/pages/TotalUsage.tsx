@@ -620,11 +620,12 @@ async function fetchAccountData(account: Account): Promise<{
   autoSignedIn: boolean;
 }> {
   const { startDate, endDate } = getDateRange();
+  const syncDate = new Date();
 
   const stats = await requestWithAccountSession(account, (context) =>
     fetchAccountDashboardStats(context)
   );
-  syncAccountStats(account.id, stats.value);
+  syncAccountStats(account.id, stats.value, syncDate);
 
   // Recent usage feeds the 7-day chart only; a failure here must not hide
   // the cumulative totals, so it is best-effort.

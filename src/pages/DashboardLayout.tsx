@@ -3,6 +3,7 @@ import Sidebar from "../components/Sidebar";
 import TitleBar from "../components/TitleBar";
 import Dashboard from "../pages/Dashboard";
 import TotalUsage from "../pages/TotalUsage";
+import ModelRanking from "../pages/ModelRanking";
 
 export default function DashboardLayout() {
   return (
@@ -25,6 +26,7 @@ export default function DashboardLayout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/total-usage" element={<TotalUsage />} />
+            <Route path="/model-ranking" element={<ModelRanking />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

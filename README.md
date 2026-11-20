@@ -25,6 +25,8 @@ Windows needs the WebView2 runtime, which ships with Windows 10/11.
   - **ACCOUNTS TOTAL TOKENS** card summing each enabled account's locally accumulated tokens
   - Per-account breakdowns (local totals plus what the relay reports right now)
   - 7-day token usage chart
+- **Model Usage Ranking**: aggregate tokens, requests and cost by model across all enabled
+  accounts, with today / 7-day / 30-day / all-time ranges
 - **Local usage history**: totals are accumulated on this machine from every relay reading, so a relay that clears or rotates its usage data can no longer erase them
 - **Automatic re-login**: store the password per account and an expired session is renewed by itself (refresh token first, then the saved password)
 - **Backup / restore**: export the account list and the local usage history to a JSON file, and merge it back at any time
@@ -113,9 +115,11 @@ The local history and backup logic has a runnable check suite (Node 22+):
 
 ```text
 npm run verify:history
+npm run verify:ranking
 ```
 
 It asserts, among other things, that a relay wipe can never shrink the locally kept totals.
+The ranking checks cover time-range selection, model aggregation and tie ordering.
 `npm run check:backup -- <file.json>` feeds a backup file through the app's own import code and
 prints the totals the app would end up with. `npm run verify:i18n` checks the translation
 dictionary (both languages present, matching `{placeholders}`, no unused keys).

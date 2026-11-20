@@ -218,7 +218,7 @@ export function importBackup(json: string): ImportSummary {
     }
     passwordsRestored += hasRecoverableSecret(merged.password) ? 1 : 0;
     passwordsUnavailable +=
-      !!merged.password && !hasRecoverableSecret(merged.password) ? 1 : 0;
+      !!incoming.password && !hasRecoverableSecret(merged.password) ? 1 : 0;
     byId.set(incoming.id, merged);
   }
 

@@ -1,4 +1,5 @@
 import type { DashboardStats, UsageRecord } from "./api";
+import { getUsageRecordCost, getUsageRecordTokens } from "./model-usage";
 
 /**
  * Local usage history.
@@ -162,30 +163,6 @@ function toFiniteNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function getRecordTokens(record: UsageRecord): number {
-  const total = toFiniteNumber(record.total_tokens);
-  if (total !== null) return total;
-  return (
-    (toFiniteNumber(record.input_tokens) ?? 0) +
-    (toFiniteNumber(record.output_tokens) ?? 0)
-  );
-}
-
-function getRecordCost(record: UsageRecord): number {
-  const actual = toFiniteNumber(record.actual_cost);
-  if (actual !== null) return actual;
-  return toFiniteNumber(record.total_cost) ?? 0;
-}
-
-function sumFinite(values: unknown[]): number {
-  let total = 0;
-  for (const value of values) {
-    const number = toFiniteNumber(value);
-    total += number === null ? 0 : number;
-  }
-  return total;
-}
-
 export function emptyCumulative(): AccountCumulative {
   return {
     totalTokens: 0,
@@ -280,6 +257,19 @@ export function syncAccountStats(
   const snapshots = loadAll();
   const existing = snapshots[accountId];
   const base = existing ?? emptySnapshot(accountId, syncDate);
+  const syncTimestamp = syncDate.toISOString();
+
+  // A slower request can finish after a newer request and otherwise move the
+  // relay baseline backwards, causing the next sync to double-count usage.
+  if (base.lastSyncAt && base.lastSyncAt > syncTimestamp) {
+    return {
+      snapshot: base,
+      deltaTokens: 0,
+      deltaRequests: 0,
+      deltaCost: 0,
+      resetDetected: false,
+    };
+  }
 
   const server: AccountCumulative = {
     totalTokens: toFiniteNumber(stats.total_tokens) ?? 0,
@@ -330,7 +320,7 @@ export function syncAccountStats(
   const next: AccountUsageSnapshot = {
     ...base,
     accountId,
-    lastSyncAt: syncDate.toISOString(),
+    lastSyncAt: syncTimestamp,
     lastError: undefined,
     local,
     cumulative: server,
@@ -372,6 +362,17 @@ function mergeDailyUsage(
   };
 }
 
+function getRecordDateKey(record: UsageRecord, fallback: Date): string {
+  const raw = record.created_at?.trim();
+  if (!raw) return toDateKey(fallback);
+
+  // Date-only values should not shift across time zones when converted to Date.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? toDateKey(fallback) : toDateKey(parsed);
+}
+
 /** Merge the fetched usage records into the per-day chart data. */
 export function recordUsageForAccount(
   accountId: string,
@@ -381,24 +382,41 @@ export function recordUsageForAccount(
   const snapshots = loadAll();
   const existing = snapshots[accountId];
   const base = existing ?? emptySnapshot(accountId, syncDate);
-  const dateKey = toDateKey(syncDate);
-
-  const observed: DailyUsage = {
-    date: dateKey,
-    requests: records.length,
-    inputTokens: sumFinite(records.map((record) => record.input_tokens)),
-    outputTokens: sumFinite(records.map((record) => record.output_tokens)),
-    totalTokens: sumFinite(records.map((record) => getRecordTokens(record))),
-    cost: sumFinite(records.map((record) => getRecordCost(record))),
-  };
 
   const days = { ...normalizeDays(base.days) };
-  days[dateKey] = mergeDailyUsage(days[dateKey], observed);
+  const observedByDate = new Map<string, DailyUsage>();
+
+  for (const record of records) {
+    const dateKey = getRecordDateKey(record, syncDate);
+    const observed = observedByDate.get(dateKey) ?? {
+      date: dateKey,
+      requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+    };
+    observed.requests += 1;
+    observed.inputTokens += toFiniteNumber(record.input_tokens) ?? 0;
+    observed.outputTokens += toFiniteNumber(record.output_tokens) ?? 0;
+    observed.totalTokens += getUsageRecordTokens(record);
+    observed.cost += getUsageRecordCost(record);
+    observedByDate.set(dateKey, observed);
+  }
+
+  for (const [dateKey, observed] of observedByDate) {
+    days[dateKey] = mergeDailyUsage(days[dateKey], observed);
+  }
+
+  const syncTimestamp = syncDate.toISOString();
 
   const next: AccountUsageSnapshot = {
     ...base,
     accountId,
-    lastSyncAt: syncDate.toISOString(),
+    lastSyncAt:
+      base.lastSyncAt && base.lastSyncAt > syncTimestamp
+        ? base.lastSyncAt
+        : syncTimestamp,
     lastError: undefined,
     local: normalizeCumulative(base.local),
     cumulative: normalizeCumulative(base.cumulative),

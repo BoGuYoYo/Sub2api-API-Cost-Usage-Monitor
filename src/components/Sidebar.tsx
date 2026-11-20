@@ -1,4 +1,4 @@
-import { LayoutDashboard, ChartPie, Languages } from "lucide-react";
+import { LayoutDashboard, ChartPie, Languages, Trophy } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { LOCALES } from "../lib/i18n";
 import { useI18n } from "../lib/use-i18n";
@@ -6,6 +6,7 @@ import { useI18n } from "../lib/use-i18n";
 const NAV_ITEMS = [
   { path: "/", labelKey: "nav.dashboard", icon: LayoutDashboard },
   { path: "/total-usage", labelKey: "nav.totalUsage", icon: ChartPie },
+  { path: "/model-ranking", labelKey: "nav.modelRanking", icon: Trophy },
 ] as const;
 
 export default function Sidebar() {

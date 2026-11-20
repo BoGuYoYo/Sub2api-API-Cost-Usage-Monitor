@@ -120,6 +120,26 @@ const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "
 check("day tokens keep the max", getAccountSnapshot(ACCOUNT)?.days[key]?.totalTokens, 100);
 check("day cost keeps the max", getAccountSnapshot(ACCOUNT)?.days[key]?.cost, 0.1);
 
+console.log("multi-day records stay on their own dates");
+recordUsageForAccount(ACCOUNT, [
+  { id: 2, created_at: "2026-11-17", total_tokens: 200, input_tokens: 120, output_tokens: 80 },
+  { id: 3, created_at: "2026-11-18", total_tokens: 300, input_tokens: 180, output_tokens: 120 },
+], new Date("2026-11-19T12:00:00.000Z"));
+check("older record keeps its date", getAccountSnapshot(ACCOUNT)?.days["2026-11-17"]?.totalTokens, 200);
+check("newer record keeps its date", getAccountSnapshot(ACCOUNT)?.days["2026-11-18"]?.totalTokens, 300);
+
+console.log("stale sync responses cannot move the baseline backwards");
+storage.clear();
+syncAccountStats("acc-stale", stats(100, 1, 0.1), new Date("2026-11-19T10:00:00.000Z"));
+syncAccountStats("acc-stale", stats(110, 2, 0.2), new Date("2026-11-19T10:00:02.000Z"));
+const staleSync = syncAccountStats(
+  "acc-stale",
+  stats(100, 1, 0.1),
+  new Date("2026-11-19T10:00:01.000Z")
+);
+check("stale baseline is ignored", staleSync.snapshot.cumulative.totalTokens, 110);
+check("stale sync does not inflate local history", staleSync.snapshot.local.totalTokens, 110);
+
 console.log("snapshot merging never loses the larger history");
 const merged = mergeAccountSnapshot(
   {

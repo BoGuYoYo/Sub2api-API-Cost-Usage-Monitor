@@ -22,6 +22,12 @@ export function formatCurrency(value: number): string {
   return "$" + value.toFixed(4);
 }
 
+/** Percentage with one decimal place, used by ranking share bars. */
+export function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return "---";
+  return `${value.toFixed(1)}%`;
+}
+
 /** ISO date key (YYYY-MM-DD) for API range parameters and per-day keys. */
 export function formatDateKey(value: Date): string {
   const year = value.getFullYear();

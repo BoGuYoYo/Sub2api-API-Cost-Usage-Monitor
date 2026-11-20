@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Activity, BarChart3, ChevronDown, Clock, DollarSign, History, Monitor, RefreshCw, Zap } from "lucide-react";
 import {
@@ -22,6 +22,11 @@ import {
   syncAccountStats,
   type AccountUsageSnapshot,
 } from "../lib/usage-snapshots";
+import {
+  getUsageRecordCost,
+  getUsageRecordModel,
+  getUsageRecordTokens,
+} from "../lib/model-usage";
 import { openFloatingWidget } from "../lib/windows";
 import { formatClock, formatCompactNumber, formatCurrency, formatDateKey, formatDateTime } from "../lib/format";
 import { useI18n } from "../lib/use-i18n";
@@ -41,21 +46,6 @@ function formatCost(value: unknown): string {
   const number = toFiniteNumber(value);
   if (number === null) return "$---";
   return formatCurrency(number);
-}
-
-function getModelName(record: UsageRecord, fallback: string): string {
-  return typeof record.model === "string" && record.model.trim()
-    ? record.model
-    : fallback;
-}
-
-function getRecordTokens(record: UsageRecord): number {
-  const total = toFiniteNumber(record.total_tokens);
-  if (total !== null) return total;
-  return (
-    (toFiniteNumber(record.input_tokens) ?? 0) +
-    (toFiniteNumber(record.output_tokens) ?? 0)
-  );
 }
 
 interface LocalTotals {
@@ -151,8 +141,8 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
       ) : records && records.length > 0 ? (
         <div className="divide-y divide-white/[0.08]">
           {records.slice(0, 8).map((record, index) => {
-            const model = getModelName(record, t("dashboard.unknownModel"));
-            const actualCost = record.actual_cost ?? record.total_cost;
+            const model = getUsageRecordModel(record, t("dashboard.unknownModel"));
+            const actualCost = getUsageRecordCost(record);
             return (
               <div
                 key={`${record.id}-${index}`}
@@ -175,7 +165,7 @@ function RecentUsage({ records, loading }: RecentUsageProps) {
                     {formatCost(actualCost)}
                   </p>
                   <p className="text-[11px] tabular-nums text-white/35">
-                    {t("usage.tokensValue", { value: formatNumber(getRecordTokens(record)) })}
+                    {t("usage.tokensValue", { value: formatNumber(getUsageRecordTokens(record)) })}
                   </p>
                 </div>
               </div>
@@ -270,6 +260,7 @@ export default function Dashboard() {
     }))
   );
   const [hasAccounts, setHasAccounts] = useState(() => loadAccounts().length > 0);
+  const fetchGeneration = useRef(0);
 
   const refreshAccounts = useCallback(() => {
     const loaded = loadAccounts();
@@ -291,6 +282,8 @@ export default function Dashboard() {
   const fetchData = useCallback(async () => {
     const account = getActiveAccount();
     if (!account) return;
+    const generation = ++fetchGeneration.current;
+    const syncDate = new Date();
     const endDate = new Date();
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 6);
@@ -308,13 +301,20 @@ export default function Dashboard() {
         ),
       ]);
 
+      const isCurrentRequest =
+        generation === fetchGeneration.current &&
+        getActiveAccountId() === account.id;
       let updated = false;
       if (statsResult.status === "fulfilled") {
-        syncAccountStats(account.id, statsResult.value.value);
-        setStats(statsResult.value.value);
-        setFetchError("");
+        // Persist successful results even if the user has already switched away;
+        // only the visible React state is guarded by the request generation.
+        syncAccountStats(account.id, statsResult.value.value, syncDate);
+        if (isCurrentRequest) {
+          setStats(statsResult.value.value);
+          setFetchError("");
+        }
         updated = true;
-      } else {
+      } else if (isCurrentRequest) {
         setFetchError(
           statsResult.reason instanceof Error
             ? statsResult.reason.message
@@ -323,20 +323,22 @@ export default function Dashboard() {
       }
       if (recentResult.status === "fulfilled") {
         recordUsageForAccount(account.id, recentResult.value.value);
-        setRecentUsage(recentResult.value.value);
+        if (isCurrentRequest) setRecentUsage(recentResult.value.value);
         updated = true;
       }
-      if (updated) setLastUpdate(new Date());
-
-      setLocalTotals(readLocalTotals(account.id));
-      setResetNotice(readResetNotice(account.id));
+      if (isCurrentRequest) {
+        if (updated) setLastUpdate(new Date());
+        setLocalTotals(readLocalTotals(account.id));
+        setResetNotice(readResetNotice(account.id));
+      }
     } finally {
-      setRecentLoading(false);
+      if (generation === fetchGeneration.current) setRecentLoading(false);
     }
   }, [t]);
 
   const handleSwitchAccount = useCallback(async (id: string) => {
     if (getActiveAccountId() === id) return;
+    fetchGeneration.current += 1;
     try {
       await activateAccount(id);
       refreshAccounts();

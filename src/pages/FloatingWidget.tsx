@@ -38,13 +38,14 @@ export default function FloatingWidget() {
     async function loadStats() {
       const account = getActiveAccount();
       if (!account) return;
+      const syncDate = new Date();
       try {
         // The widget renews the session too, so a long-running widget keeps
         // feeding the local history after a token expiry.
         const result = await requestWithAccountSession(account, (context) =>
           fetchAccountDashboardStats(context)
         );
-        syncAccountStats(account.id, result.value);
+        syncAccountStats(account.id, result.value, syncDate);
         if (!disposed) setStats(result.value);
       } catch {
         // The main window handles expired sessions; keep the widget stable.
