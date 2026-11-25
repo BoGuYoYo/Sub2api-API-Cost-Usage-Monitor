@@ -28,7 +28,7 @@ export interface ModelRankingCache {
   failedAccounts: Array<{ id: string; name: string; message: string }>;
 }
 
-const MODEL_RANKING_CACHE_VERSION = 1;
+const MODEL_RANKING_CACHE_VERSION = 2;
 const MODEL_RANKING_CACHE_KEY = "sub2api_model_ranking_cache_v1";
 
 function modelRankingCacheKey(range: UsageRange, accountIds: string[]): string {
@@ -143,6 +143,27 @@ export function getUsageRecordModel(
   return model || unknownModel;
 }
 
+/**
+ * Vendor prefixes that should be folded into the plain model name in the
+ * ranking view. Some relays expose the same underlying model under a
+ * vendor-prefixed alias (e.g. `cn:deepseek-v4.1-flash` next to
+ * `deepseek-v4.1-flash`); leaving them apart splits one model into two rows
+ * and makes the ranking and its token share meaningless.
+ */
+export const MERGED_MODEL_PREFIXES = ["cn:"];
+
+/** Strip a known vendor prefix so aliases collapse into one ranking row. */
+export function normalizeModelName(raw: string): string {
+  let name = raw.trim();
+  for (const prefix of MERGED_MODEL_PREFIXES) {
+    if (name.length > prefix.length && name.toLowerCase().startsWith(prefix)) {
+      name = name.slice(prefix.length).trim();
+      break;
+    }
+  }
+  return name;
+}
+
 export function aggregateModelUsage(
   records: UsageRecord[],
   unknownModel: string
@@ -155,8 +176,8 @@ export function aggregateModelUsage(
   for (const record of records) {
     const rawModel = typeof record.model === "string" ? record.model.trim() : "";
     const isUnknown = !rawModel;
-    const key = isUnknown ? "__unknown_model__" : rawModel;
-    const model = rawModel || unknownModel;
+    const model = isUnknown ? unknownModel : normalizeModelName(rawModel);
+    const key = isUnknown ? "__unknown_model__" : model;
     const row = byModel.get(key) ?? {
       model,
       totalTokens: 0,
@@ -210,9 +231,10 @@ export function aggregateDashboardModelUsage(
       (typeof item.model_name === "string" && item.model_name.trim()) ||
       "";
     const isUnknown = !rawModel;
-    const key = isUnknown ? "__unknown_model__" : rawModel;
+    const displayName = isUnknown ? unknownModel : normalizeModelName(rawModel);
+    const key = isUnknown ? "__unknown_model__" : displayName;
     const row = byModel.get(key) ?? {
-      model: rawModel || unknownModel,
+      model: displayName,
       totalTokens: 0,
       requests: 0,
       cost: 0,
@@ -264,9 +286,12 @@ export function mergeModelUsageRankings(
   const merged = new Map<string, Omit<ModelUsageRankingRow, "share">>();
   for (const rows of groups) {
     for (const row of rows) {
-      const key = row.isUnknown ? "__unknown_model__" : row.model;
+      // Re-normalize here as well: per-account rows may still carry a vendor
+      // prefix (or come from a stale cache written before merging existed).
+      const displayName = row.isUnknown ? row.model : normalizeModelName(row.model);
+      const key = row.isUnknown ? "__unknown_model__" : displayName;
       const current = merged.get(key) ?? {
-        model: row.model,
+        model: displayName,
         totalTokens: 0,
         requests: 0,
         cost: 0,

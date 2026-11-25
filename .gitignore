@@ -34,3 +34,6 @@ outputs/
 .env
 .env.*
 !.env.example
+
+# Per-machine cargo settings (registry mirrors)
+src-tauri/.cargo/
