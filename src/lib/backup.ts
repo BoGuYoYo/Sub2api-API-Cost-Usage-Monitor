@@ -26,9 +26,15 @@ import {
   saveAllSnapshots,
   type AccountUsageSnapshot,
 } from "./usage-snapshots";
+import {
+  loadAllModelSnapshots,
+  mergeModelSnapshotMaps,
+  saveAllModelSnapshots,
+  type AccountModelSnapshot,
+} from "./model-snapshots";
 
 export const BACKUP_APP_ID = "sub2api-api-cost-usage-monitor";
-export const BACKUP_FORMAT_VERSION = 2;
+export const BACKUP_FORMAT_VERSION = 3;
 
 export interface LocalBackup {
   app: string;
@@ -39,12 +45,14 @@ export interface LocalBackup {
   activeAccountId?: string | null;
   accounts: Account[];
   snapshots: Record<string, AccountUsageSnapshot>;
+  modelSnapshots?: Record<string, AccountModelSnapshot>;
 }
 
 export interface ImportSummary {
   accountsAdded: number;
   accountsUpdated: number;
   snapshotsMerged: number;
+  modelSnapshotsMerged: number;
   /** Accounts with a saved password that is readable after the import. */
   passwordsRestored: number;
   /** Accounts whose saved password cannot be read on this installation. */
@@ -60,6 +68,7 @@ export function createBackup(): LocalBackup {
     activeAccountId: localStorage.getItem("sub2api_active_account_id"),
     accounts: loadAccounts(),
     snapshots: loadAllSnapshots(),
+    modelSnapshots: loadAllModelSnapshots(),
   };
 }
 
@@ -116,7 +125,17 @@ function parseBackup(json: string): LocalBackup {
     !Array.isArray(candidate.snapshots)
       ? (candidate.snapshots as Record<string, AccountUsageSnapshot>)
       : {};
-  if (accounts.length === 0 && Object.keys(snapshots).length === 0) {
+  const modelSnapshots =
+    candidate.modelSnapshots &&
+    typeof candidate.modelSnapshots === "object" &&
+    !Array.isArray(candidate.modelSnapshots)
+      ? (candidate.modelSnapshots as Record<string, AccountModelSnapshot>)
+      : {};
+  if (
+    accounts.length === 0 &&
+    Object.keys(snapshots).length === 0 &&
+    Object.keys(modelSnapshots).length === 0
+  ) {
     throw new BackupError(t("backup.empty"));
   }
   return {
@@ -134,6 +153,7 @@ function parseBackup(json: string): LocalBackup {
     activeAccountId: candidate.activeAccountId ?? null,
     accounts,
     snapshots,
+    modelSnapshots,
   };
 }
 
@@ -229,10 +249,18 @@ export function importBackup(json: string): ImportSummary {
   const mergedSnapshots = mergeSnapshotMaps(loadAllSnapshots(), backup.snapshots);
   saveAllSnapshots(mergedSnapshots);
 
+  const incomingModelSnapshots = backup.modelSnapshots ?? {};
+  const mergedModelSnapshots = mergeModelSnapshotMaps(
+    loadAllModelSnapshots(),
+    incomingModelSnapshots
+  );
+  saveAllModelSnapshots(mergedModelSnapshots);
+
   return {
     accountsAdded,
     accountsUpdated,
     snapshotsMerged: Object.keys(backup.snapshots).length,
+    modelSnapshotsMerged: Object.keys(incomingModelSnapshots).length,
     passwordsRestored,
     passwordsUnavailable,
   };

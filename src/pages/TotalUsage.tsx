@@ -879,6 +879,13 @@ export default function TotalUsage() {
           snapshots: summary.snapshotsMerged,
         }),
       ];
+      if (summary.modelSnapshotsMerged > 0) {
+        parts.push(
+          t("usage.restoreModelSnapshots", {
+            count: summary.modelSnapshotsMerged,
+          })
+        );
+      }
       if (summary.passwordsRestored > 0) {
         parts.push(t("usage.restorePasswords", { count: summary.passwordsRestored }));
       }

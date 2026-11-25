@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   BarChart3,
   Coins,
+  History,
   RefreshCw,
   Trophy,
   Zap,
@@ -22,43 +23,73 @@ import {
 import {
   ApiError,
   fetchAccountDashboardModelUsage,
+  fetchAccountDashboardStats,
   fetchAccountUsageRecords,
   type DashboardModelUsage,
-  type UsageRecord,
+  type DashboardStats,
 } from "../lib/api";
+import {
+  getAccountModelSnapshot,
+  getAccountOfflineModelRanking,
+  recordModelUsageError,
+  syncAccountModelUsage,
+  type ModelTotals,
+} from "../lib/model-snapshots";
 import {
   aggregateDashboardModelUsage,
   aggregateModelUsage,
   getUsageRangeBounds,
-  loadModelRankingCache,
   mergeModelUsageRankings,
-  saveModelRankingCache,
   type ModelUsageRankingRow,
   type UsageRange,
 } from "../lib/model-usage";
+import { getAccountSnapshot, syncAccountStats } from "../lib/usage-snapshots";
 import {
   formatClock,
   formatCompactNumber,
   formatCurrency,
+  formatDateTime,
   formatPercent,
 } from "../lib/format";
 import { useI18n } from "../lib/use-i18n";
 import type { MessageKey } from "../lib/i18n";
 
-interface FailedAccount {
+interface AccountIssue {
   id: string;
   name: string;
   message: string;
+  savedAt?: string;
+}
+
+interface ResetNoticeAccount {
+  id: string;
+  name: string;
+  detectedAt: string;
+}
+
+const RESET_NOTICE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isRecentReset(value?: string): boolean {
+  if (!value) return false;
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return false;
+  return Date.now() - time <= RESET_NOTICE_WINDOW_MS;
+}
+
+function emptyTotals(): ModelTotals {
+  return { totalTokens: 0, requests: 0, cost: 0 };
 }
 
 function SummaryCard({
   icon,
   label,
   value,
+  sublabel,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
+  sublabel?: string;
 }) {
   return (
     <div className="rounded-2xl border border-white/[0.10] bg-white/[0.06] p-4 backdrop-blur-xl">
@@ -71,6 +102,7 @@ function SummaryCard({
       <p className="mt-2 text-2xl font-light tabular-nums text-white/90">
         {value}
       </p>
+      {sublabel && <p className="mt-1 text-[11px] text-white/35">{sublabel}</p>}
     </div>
   );
 }
@@ -80,7 +112,11 @@ export default function ModelRanking() {
   const navigate = useNavigate();
   const [range, setRange] = useState<UsageRange>("30d");
   const [rankingRows, setRankingRows] = useState<ModelUsageRankingRow[]>([]);
-  const [failures, setFailures] = useState<FailedAccount[]>([]);
+  const [liveServerTotals, setLiveServerTotals] = useState<ModelTotals>(emptyTotals);
+  const [liveCount, setLiveCount] = useState(0);
+  const [offlineAccounts, setOfflineAccounts] = useState<AccountIssue[]>([]);
+  const [failures, setFailures] = useState<AccountIssue[]>([]);
+  const [resetAccounts, setResetAccounts] = useState<ResetNoticeAccount[]>([]);
   const [truncatedAccounts, setTruncatedAccounts] = useState<string[]>([]);
   const [totalAccounts, setTotalAccounts] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -92,33 +128,60 @@ export default function ModelRanking() {
 
   const loadUsage = useCallback(async () => {
     const requestGeneration = ++generation.current;
+    const now = new Date();
     const accounts = getEnabledAccounts();
-    const bounds = getUsageRangeBounds(range);
-    const accountIds = accounts.map((account) => account.id);
-    const cached = loadModelRankingCache(range, accountIds);
+    const bounds = getUsageRangeBounds(range, now);
+    const allBounds = getUsageRangeBounds("all", now);
+    const unknownLabel = t("ranking.unknownModel");
+
+    // Hydrate immediately from per-account offline snapshots so the screen
+    // never flashes empty while live relays are being queried.
+    const initialGroups: ModelUsageRankingRow[][] = [];
+    let latestOfflineSync = "";
+    for (const account of accounts) {
+      const offline = getAccountOfflineModelRanking(
+        account.id,
+        range,
+        unknownLabel,
+        now
+      );
+      if (offline) {
+        initialGroups.push(offline.rows);
+        if (offline.lastSyncAt > latestOfflineSync) {
+          latestOfflineSync = offline.lastSyncAt;
+        }
+      }
+    }
+    const hasInitialOffline = initialGroups.length > 0;
 
     setTotalAccounts(accounts.length);
-    setLoading(!cached);
+    setLoading(!hasInitialOffline);
     setRefreshing(true);
     setPageError("");
     setFailures([]);
+    setOfflineAccounts([]);
+    setResetAccounts([]);
     setStale(false);
 
-    if (cached) {
-      setRankingRows(cached.rows);
-      setFailures(cached.failedAccounts);
-      setTruncatedAccounts(cached.truncatedAccounts);
-      setLastUpdate(new Date(cached.fetchedAt));
+    if (hasInitialOffline) {
+      setRankingRows(mergeModelUsageRankings(initialGroups));
+      setTruncatedAccounts([]);
+      setLiveCount(0);
+      setLiveServerTotals(emptyTotals());
+      setLastUpdate(latestOfflineSync ? new Date(latestOfflineSync) : null);
     } else {
       setRankingRows([]);
-      setFailures([]);
       setTruncatedAccounts([]);
+      setLiveCount(0);
+      setLiveServerTotals(emptyTotals());
       setLastUpdate(null);
     }
 
     if (accounts.length === 0) {
       setRankingRows([]);
       setFailures([]);
+      setOfflineAccounts([]);
+      setResetAccounts([]);
       setTruncatedAccounts([]);
       setLastUpdate(new Date());
       setLoading(false);
@@ -138,16 +201,43 @@ export default function ModelRanking() {
                 context
               );
               if (models) {
-                return { kind: "models" as const, models, truncated: false };
+                let allModels: DashboardModelUsage[] | null = null;
+                if (range !== "all") {
+                  try {
+                    allModels = await fetchAccountDashboardModelUsage(
+                      allBounds.startDate,
+                      allBounds.endDate,
+                      context
+                    );
+                  } catch {
+                    // Best-effort all-time sync for reset detection & offline history.
+                  }
+                }
+                return {
+                  kind: "models" as const,
+                  models,
+                  allModels,
+                  truncated: false,
+                };
               }
+
               const usage = await fetchAccountUsageRecords(
                 bounds.startDate,
                 bounds.endDate,
                 context
               );
+              let stats: DashboardStats | null = null;
+              if (range !== "all") {
+                try {
+                  stats = await fetchAccountDashboardStats(context);
+                } catch {
+                  // Best-effort stats sync for reset detection.
+                }
+              }
               return {
                 kind: "records" as const,
                 records: usage.records,
+                stats,
                 truncated: usage.truncated,
               };
             } catch (error: unknown) {
@@ -157,15 +247,24 @@ export default function ModelRanking() {
                 bounds.endDate,
                 context
               );
+              let stats: DashboardStats | null = null;
+              if (range !== "all") {
+                try {
+                  stats = await fetchAccountDashboardStats(context);
+                } catch {
+                  // Best-effort stats sync for reset detection.
+                }
+              }
               return {
                 kind: "records" as const,
                 records: usage.records,
+                stats,
                 truncated: usage.truncated,
               };
             }
           });
           return {
-            accountName: account.name,
+            account,
             ...result.value,
           };
         })
@@ -173,62 +272,157 @@ export default function ModelRanking() {
 
       if (requestGeneration !== generation.current) return;
 
-      const records: UsageRecord[] = results.flatMap((result) =>
-        result.status === "fulfilled" && result.value.kind === "records"
-          ? result.value.records
-          : []
-      );
-      const modelStats: DashboardModelUsage[] = results.flatMap((result) =>
-        result.status === "fulfilled" && result.value.kind === "models"
-          ? result.value.models
-          : []
-      );
-      const nextFailures = results.flatMap((result, index) =>
-        result.status === "rejected"
-          ? [
-              {
-                id: accounts[index].id,
-                name: accounts[index].name,
-                message:
-                  result.reason instanceof Error
-                    ? result.reason.message
-                    : t("ranking.loadFailed"),
-              },
-            ]
-          : []
-      );
-      const nextTruncated = results.flatMap((result) =>
-        result.status === "fulfilled" && result.value.truncated
-          ? [result.value.accountName]
-          : []
-      );
+      const syncDate = new Date();
+      const rowGroups: ModelUsageRankingRow[][] = [];
+      const nextFailures: AccountIssue[] = [];
+      const nextOffline: AccountIssue[] = [];
+      const nextResets: ResetNoticeAccount[] = [];
+      const nextTruncated: string[] = [];
+      const nextServerTotals = emptyTotals();
+      let nextLiveCount = 0;
 
-      const nextRows = mergeModelUsageRankings([
-        aggregateDashboardModelUsage(modelStats, t("ranking.unknownModel")),
-        aggregateModelUsage(records, t("ranking.unknownModel")),
-      ]);
-      const fetchedAt = new Date().toISOString();
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index];
+        const account = accounts[index];
+
+        if (result.status === "fulfilled") {
+          nextLiveCount += 1;
+          const payload = result.value;
+
+          let externalResetAt =
+            getAccountSnapshot(account.id)?.lastReset?.detectedAt;
+
+          if (payload.kind === "models" && payload.allModels) {
+            const allRows = aggregateDashboardModelUsage(
+              payload.allModels,
+              unknownLabel
+            );
+            const allSync = syncAccountModelUsage(
+              account.id,
+              "all",
+              allRows,
+              unknownLabel,
+              { syncDate, externalResetAt }
+            );
+            const allResetAt = allSync.snapshot.lastReset?.detectedAt;
+            if (allResetAt && (!externalResetAt || allResetAt > externalResetAt)) {
+              externalResetAt = allResetAt;
+            }
+          } else if (payload.kind === "records" && payload.stats) {
+            const statsSync = syncAccountStats(account.id, payload.stats, syncDate);
+            const statsResetAt = statsSync.snapshot.lastReset?.detectedAt;
+            if (
+              statsResetAt &&
+              (!externalResetAt || statsResetAt > externalResetAt)
+            ) {
+              externalResetAt = statsResetAt;
+            }
+          }
+
+          const fetchedRows =
+            payload.kind === "models"
+              ? aggregateDashboardModelUsage(payload.models, unknownLabel)
+              : aggregateModelUsage(payload.records, unknownLabel);
+
+          const synced = syncAccountModelUsage(
+            account.id,
+            range,
+            fetchedRows,
+            unknownLabel,
+            {
+              syncDate,
+              truncated: payload.truncated,
+              externalResetAt,
+            }
+          );
+
+          rowGroups.push(synced.rows);
+          nextServerTotals.totalTokens += synced.serverTotals.totalTokens;
+          nextServerTotals.requests += synced.serverTotals.requests;
+          nextServerTotals.cost += synced.serverTotals.cost;
+          if (payload.truncated) {
+            nextTruncated.push(account.name);
+          }
+
+          const rangeResetAt =
+            range === "7d" || range === "30d"
+              ? synced.rangeSnapshot.carryOver?.resetAt
+              : synced.snapshot.lastReset?.detectedAt;
+          if (isRecentReset(rangeResetAt) && rangeResetAt) {
+            nextResets.push({
+              id: account.id,
+              name: account.name,
+              detectedAt: rangeResetAt,
+            });
+          }
+          continue;
+        }
+
+        const errorMessage =
+          result.reason instanceof Error
+            ? result.reason.message
+            : t("ranking.loadFailed");
+        recordModelUsageError(account.id, errorMessage);
+
+        const offline = getAccountOfflineModelRanking(
+          account.id,
+          range,
+          unknownLabel,
+          syncDate
+        );
+        if (offline) {
+          rowGroups.push(offline.rows);
+          nextOffline.push({
+            id: account.id,
+            name: account.name,
+            message: errorMessage,
+            savedAt: offline.lastSyncAt,
+          });
+          if (offline.truncated) {
+            nextTruncated.push(account.name);
+          }
+          const modelSnap = getAccountModelSnapshot(account.id);
+          const rangeSnap = modelSnap?.ranges[range];
+          const rangeResetAt =
+            range === "7d" || range === "30d"
+              ? rangeSnap?.carryOver?.resetAt
+              : modelSnap?.lastReset?.detectedAt;
+          if (isRecentReset(rangeResetAt) && rangeResetAt) {
+            nextResets.push({
+              id: account.id,
+              name: account.name,
+              detectedAt: rangeResetAt,
+            });
+          }
+        } else {
+          nextFailures.push({
+            id: account.id,
+            name: account.name,
+            message: errorMessage,
+          });
+        }
+      }
+
+      const nextRows = mergeModelUsageRankings(rowGroups);
       setRankingRows(nextRows);
+      setLiveServerTotals(nextServerTotals);
+      setLiveCount(nextLiveCount);
+      setOfflineAccounts(nextOffline);
       setFailures(nextFailures);
+      setResetAccounts(nextResets);
       setTruncatedAccounts(nextTruncated);
-      setLastUpdate(new Date(fetchedAt));
+      setLastUpdate(syncDate);
       setStale(false);
-      saveModelRankingCache({
-        range,
-        accountIds,
-        rows: nextRows,
-        fetchedAt,
-        truncatedAccounts: nextTruncated,
-        failedAccounts: nextFailures,
-      });
     } catch (error: unknown) {
       if (requestGeneration !== generation.current) return;
-      if (!cached) {
+      if (!hasInitialOffline) {
         setRankingRows([]);
         setFailures([]);
+        setOfflineAccounts([]);
+        setResetAccounts([]);
         setTruncatedAccounts([]);
       }
-      setStale(Boolean(cached));
+      setStale(hasInitialOffline);
       setPageError(
         error instanceof Error ? error.message : t("ranking.loadFailed")
       );
@@ -265,8 +459,19 @@ export default function ModelRanking() {
     [rows]
   );
 
-  const allAccountsFailed = totalAccounts > 0 && failures.length === totalAccounts;
-  const loadedAccounts = totalAccounts - failures.length;
+  const allAccountsFailed =
+    totalAccounts > 0 &&
+    failures.length === totalAccounts &&
+    offlineAccounts.length === 0;
+  const offlineCount = offlineAccounts.length;
+  const hasLocalDivergence =
+    !loading &&
+    (offlineCount > 0 ||
+      resetAccounts.length > 0 ||
+      summary.tokens > liveServerTotals.totalTokens + 2 ||
+      summary.requests > liveServerTotals.requests + 2 ||
+      summary.cost > liveServerTotals.cost + 1e-6);
+
   const rangeOptions: ReadonlyArray<{ id: UsageRange; labelKey: MessageKey }> = [
     { id: "today", labelKey: "ranking.range.today" },
     { id: "7d", labelKey: "ranking.range.7d" },
@@ -348,21 +553,50 @@ export default function ModelRanking() {
               icon={<Zap size={14} />}
               label={t("ranking.totalTokens")}
               value={displayValue(summary.tokens)}
+              sublabel={
+                hasLocalDivergence
+                  ? t("ranking.localHistoryTokensHint", {
+                      value: formatCompactNumber(liveServerTotals.totalTokens),
+                    })
+                  : undefined
+              }
             />
             <SummaryCard
               icon={<BarChart3 size={14} />}
               label={t("ranking.totalRequests")}
               value={displayValue(summary.requests)}
+              sublabel={
+                hasLocalDivergence
+                  ? t("ranking.localHistoryHint", {
+                      value: formatCompactNumber(liveServerTotals.requests),
+                    })
+                  : undefined
+              }
             />
             <SummaryCard
               icon={<Coins size={14} />}
               label={t("ranking.totalCost")}
               value={loading ? "$---" : formatCurrency(summary.cost)}
+              sublabel={
+                hasLocalDivergence
+                  ? t("ranking.localHistoryHint", {
+                      value: formatCurrency(liveServerTotals.cost),
+                    })
+                  : undefined
+              }
             />
             <SummaryCard
               icon={<Trophy size={14} />}
               label={t("ranking.modelCount")}
               value={loading ? "---" : String(rows.length)}
+              sublabel={
+                offlineCount > 0
+                  ? t("usage.activeAccountsHint", {
+                      accounts: totalAccounts,
+                      offline: offlineCount,
+                    })
+                  : undefined
+              }
             />
           </div>
 
@@ -378,6 +612,45 @@ export default function ModelRanking() {
               className="rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 text-xs text-amber-100/75"
             >
               {t("ranking.stale")}
+            </div>
+          )}
+
+          {offlineAccounts.length > 0 && (
+            <div
+              role="status"
+              className="rounded-xl border border-sky-300/20 bg-sky-300/[0.07] px-4 py-3 text-xs text-sky-200/90"
+            >
+              <p className="font-medium">
+                {t("ranking.offlineCount", { count: offlineAccounts.length })}
+              </p>
+              <ul className="mt-2 space-y-1 pl-5 text-[11px] text-sky-100/65">
+                {offlineAccounts.map((account) => (
+                  <li key={account.id} className="list-disc break-words">
+                    {t("ranking.offlineAccountDetail", {
+                      name: account.name,
+                      time: formatDateTime(account.savedAt),
+                      error: account.message,
+                    })}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {resetAccounts.length > 0 && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 text-xs text-amber-200/90"
+            >
+              <History size={12} className="mr-1.5 inline" />
+              {t("ranking.resetNotice", {
+                list: resetAccounts
+                  .map(
+                    (account) =>
+                      `${account.name} (${formatDateTime(account.detectedAt)})`
+                  )
+                  .join(", "),
+              })}
             </div>
           )}
 
@@ -427,10 +700,16 @@ export default function ModelRanking() {
                     {t("ranking.tableTitle")}
                   </h2>
                   <p className="mt-0.5 text-[10px] text-white/30">
-                    {t("ranking.loadedAccounts", {
-                      loaded: loadedAccounts,
-                      total: totalAccounts,
-                    })}
+                    {offlineCount > 0
+                      ? t("ranking.loadedWithOffline", {
+                          live: liveCount,
+                          offline: offlineCount,
+                          total: totalAccounts,
+                        })
+                      : t("ranking.loadedAccounts", {
+                          loaded: liveCount,
+                          total: totalAccounts,
+                        })}
                   </p>
                 </div>
               </div>
@@ -534,6 +813,10 @@ export default function ModelRanking() {
               </div>
             )}
           </section>
+
+          <p className="text-[11px] leading-5 text-white/30">
+            {t("ranking.localHistoryNote")}
+          </p>
         </>
       )}
     </div>

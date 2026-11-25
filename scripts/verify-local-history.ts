@@ -221,6 +221,7 @@ console.log("a backup restores accounts and merges usage history without shrinki
 };
 const { loadAccounts } = await import("../src/lib/accounts.ts");
 const { importBackup, createBackup } = await import("../src/lib/backup.ts");
+const { getAccountModelSnapshot } = await import("../src/lib/model-snapshots.ts");
 
 const localAccount = {
   id: "acc-backup",
@@ -277,6 +278,29 @@ const backupJson = JSON.stringify({
       days: {},
     },
   },
+  modelSnapshots: {
+    "acc-backup": {
+      accountId: "acc-backup",
+      lastSyncAt: "2026-01-04T00:00:00.000Z",
+      resetCount: 1,
+      ranges: {
+        all: {
+          range: "all",
+          windowStartDate: "1970-01-01",
+          windowEndDate: "2026-01-04",
+          lastSyncAt: "2026-01-04T00:00:00.000Z",
+          seeded: true,
+          models: {
+            "gpt-4o": {
+              model: "gpt-4o",
+              local: { totalTokens: 9000, requests: 90, cost: 9 },
+              server: { totalTokens: 9000, requests: 90, cost: 9 },
+            },
+          },
+        },
+      },
+    },
+  },
 });
 
 const summary = importBackup(backupJson);
@@ -286,6 +310,12 @@ check("newer backup record wins", loadAccounts()[0].name, "Restored name");
 check("saved password comes back", revealSecret(loadAccounts()[0].password), "relay-password");
 check("automatic sign-in re-enabled", loadAccounts()[0].autoRelogin, true);
 check("usage merged upward", getAccountSnapshot("acc-backup")?.local.totalTokens, 9000);
+check("model snapshot merged upward", summary.modelSnapshotsMerged, 1);
+check(
+  "model history restored",
+  getAccountModelSnapshot("acc-backup")?.ranges.all?.models["gpt-4o"]?.local.totalTokens,
+  9000
+);
 
 console.log("a fresh install adopts the backup's device key");
 console.log(`  (backup payload from ${createBackup().accounts.length} local account(s))`);
@@ -295,6 +325,11 @@ check("account restored on a clean install", freshSummary.accountsAdded, 1);
 check("password usable after restore", freshSummary.passwordsRestored, 1);
 check("password readable on the new install", revealSecret(loadAccounts()[0].password), "relay-password");
 check("history restored", getAccountSnapshot("acc-backup")?.local.totalTokens, 9000);
+check(
+  "model history restored on fresh install",
+  getAccountModelSnapshot("acc-backup")?.ranges.all?.models["gpt-4o"]?.local.totalTokens,
+  9000
+);
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures > 0) {

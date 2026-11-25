@@ -31,6 +31,7 @@ register(new URL("./ts-path-resolver.mjs", import.meta.url));
 
 const { importBackup } = await import("../src/lib/backup.ts");
 const { loadAllSnapshots } = await import("../src/lib/usage-snapshots.ts");
+const { loadAllModelSnapshots } = await import("../src/lib/model-snapshots.ts");
 
 const file = process.argv[2];
 if (!file) {
@@ -56,5 +57,13 @@ for (const [accountId, snapshot] of Object.entries(snapshots)) {
       `days=${Object.keys(snapshot.days).length}`,
       `lastSync=${snapshot.lastSyncAt}`,
     ].join("  ")
+  );
+}
+
+const modelSnapshots = loadAllModelSnapshots();
+for (const [accountId, snapshot] of Object.entries(modelSnapshots)) {
+  const ranges = Object.keys(snapshot.ranges).join(",");
+  console.log(
+    `model  ${accountId}  ranges=${ranges || "none"}  resets=${snapshot.resetCount}  lastSync=${snapshot.lastSyncAt}`
   );
 }

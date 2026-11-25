@@ -129,6 +129,34 @@ const MESSAGES = {
     en: "{loaded} of {total} account(s) loaded",
     zh: "已加载 {loaded} / {total} 个账户",
   },
+  "ranking.loadedWithOffline": {
+    en: "{live} live · {offline} offline (saved) of {total} account(s)",
+    zh: "在线 {live} / {total} 个账户 · {offline} 个离线（本地数据）",
+  },
+  "ranking.offlineCount": {
+    en: "{count} account(s) are offline — showing locally saved model usage.",
+    zh: "{count} 个账户处于离线状态 —— 正在显示本地保存的模型用量。",
+  },
+  "ranking.offlineAccountDetail": {
+    en: "{name} (saved {time}): {error}",
+    zh: "{name}（保存于 {time}）：{error}",
+  },
+  "ranking.resetNotice": {
+    en: "The relay cleared its usage data for {list}. Local model history was kept and continues from the new relay numbers.",
+    zh: "中转站清除了 {list} 的用量数据。本地模型历史已保留，并将从中转站的新数值继续增长。",
+  },
+  "ranking.localHistoryTokensHint": {
+    en: "Local history · online relays report {value} tokens",
+    zh: "本地累计 · 在线中转站当前上报 {value} tokens",
+  },
+  "ranking.localHistoryHint": {
+    en: "Local history · online relays report {value}",
+    zh: "本地累计 · 在线中转站当前上报 {value}",
+  },
+  "ranking.localHistoryNote": {
+    en: "Model rankings are saved locally per account on this machine, so offline accounts and relay resets do not erase your history. All-time and today's rankings accumulate monotonically; 7-day and 30-day windows preserve pre-reset usage until the window ages past the reset. Backups on Total Usage include this model history.",
+    zh: "模型排行会按账户保存在本机，因此账户离线或中转站清空数据时不会丢失历史。“全部历史”和“今日”会持续累加；“最近 7 天”和“最近 30 天”会在重置后的窗口期内保留重置前用量。在“总用量”页进行的备份与恢复也包含这份模型历史。",
+  },
   "ranking.sortedByTokens": { en: "Sorted by tokens", zh: "按 Token 数排序" },
   "ranking.rank": { en: "Rank", zh: "排名" },
   "ranking.model": { en: "Model", zh: "模型" },
@@ -328,6 +356,10 @@ const MESSAGES = {
   "usage.restoreSummary": {
     en: "Restored {added} new account(s) · {updated} merged · {snapshots} usage snapshot(s) merged",
     zh: "已恢复 {added} 个新账户 · 合并 {updated} 个 · 合并 {snapshots} 份用量快照",
+  },
+  "usage.restoreModelSnapshots": {
+    en: "{count} model history snapshot(s) merged",
+    zh: "合并 {count} 份模型历史快照",
   },
   "usage.restorePasswords": {
     en: "{count} saved password(s) usable",
